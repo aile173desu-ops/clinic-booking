@@ -71,7 +71,7 @@ function fbOnValue(path, cb) {
 // ============================================================
 // Utility helpers
 // ============================================================
-const DAYS_JP = ["æ¥", "æ", "ç«", "æ°´", "æ¨", "é", "å"];
+const DAYS_JP = ["日", "月", "火", "水", "木", "金", "土"];
 const pad = (n) => String(n).padStart(2, "0");
 const fmtDate = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const parseDate = (s) => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
@@ -80,11 +80,11 @@ const timeToMin = (t) => { const [h, m] = t.split(":").map(Number); return h * 6
 
 // Japanese holidays 2025-2027
 const HOLIDAYS_FIXED = [
-  { name: "åæ¥", month: 1, day: 1 }, { name: "å»ºå½è¨å¿µã®æ¥", month: 2, day: 11 },
-  { name: "å¤©çèªçæ¥", month: 2, day: 23 }, { name: "æ­åã®æ¥", month: 4, day: 29 },
-  { name: "æ²æ³è¨å¿µæ¥", month: 5, day: 3 }, { name: "ã¿ã©ãã®æ¥", month: 5, day: 4 },
-  { name: "ãã©ãã®æ¥", month: 5, day: 5 }, { name: "å±±ã®æ¥", month: 8, day: 11 },
-  { name: "æåã®æ¥", month: 11, day: 3 }, { name: "å¤å´æè¬ã®æ¥", month: 11, day: 23 },
+  { name: "元日", month: 1, day: 1 }, { name: "建国記念の日", month: 2, day: 11 },
+  { name: "天皇誕生日", month: 2, day: 23 }, { name: "昭和の日", month: 4, day: 29 },
+  { name: "憲法記念日", month: 5, day: 3 }, { name: "みどりの日", month: 5, day: 4 },
+  { name: "こどもの日", month: 5, day: 5 }, { name: "山の日", month: 8, day: 11 },
+  { name: "文化の日", month: 11, day: 3 }, { name: "勤労感謝の日", month: 11, day: 23 },
 ];
 
 function getHappyMonday(year, month, weekNum) {
@@ -97,18 +97,18 @@ function getHappyMonday(year, month, weekNum) {
 function getJPHolidays(year) {
   const list = [];
   HOLIDAYS_FIXED.forEach((h) => list.push({ name: h.name, date: `${year}-${pad(h.month)}-${pad(h.day)}` }));
-  list.push({ name: "æäººã®æ¥", date: `${year}-01-${pad(getHappyMonday(year, 1, 2))}` });
-  list.push({ name: "æµ·ã®æ¥", date: `${year}-07-${pad(getHappyMonday(year, 7, 3))}` });
-  list.push({ name: "ã¹ãã¼ãã®æ¥", date: `${year}-10-${pad(getHappyMonday(year, 10, 2))}` });
-  list.push({ name: "æ¬èã®æ¥", date: `${year}-09-${pad(getHappyMonday(year, 9, 3))}` });
-  list.push({ name: "æ¥åã®æ¥", date: `${year}-03-20` });
-  list.push({ name: "ç§åã®æ¥", date: `${year}-09-23` });
+  list.push({ name: "成人の日", date: `${year}-01-${pad(getHappyMonday(year, 1, 2))}` });
+  list.push({ name: "海の日", date: `${year}-07-${pad(getHappyMonday(year, 7, 3))}` });
+  list.push({ name: "スポーツの日", date: `${year}-10-${pad(getHappyMonday(year, 10, 2))}` });
+  list.push({ name: "敬老の日", date: `${year}-09-${pad(getHappyMonday(year, 9, 3))}` });
+  list.push({ name: "春分の日", date: `${year}-03-20` });
+  list.push({ name: "秋分の日", date: `${year}-09-23` });
   list.forEach((h) => {
     if (parseDate(h.date).getDay() === 0) {
       const sub = new Date(parseDate(h.date));
       sub.setDate(sub.getDate() + 1);
       const subKey = fmtDate(sub);
-      if (!list.find((x) => x.date === subKey)) list.push({ name: "æ¯æ¿ä¼æ¥", date: subKey });
+      if (!list.find((x) => x.date === subKey)) list.push({ name: "振替休日", date: subKey });
     }
   });
   return list.sort((a, b) => a.date.localeCompare(b.date));
@@ -126,7 +126,7 @@ const LS = {
 // Defaults
 // ============================================================
 const DEFAULT_SETTINGS = {
-  clinicName: "è¨ºçäºç´ç®¡ç",
+  clinicName: "診療予約管理",
   amStart: "09:00",
   amEnd: "11:30",
   pmStart: "14:00",
@@ -134,7 +134,7 @@ const DEFAULT_SETTINGS = {
   closedDays: [0],
   closedDates: [],
   pin: "1234",
-  staff: ["äºæ³¢", "å¥¥æ", "ä¸­é", "è½å", "å²¸"],
+  staff: ["井波", "奥村", "中野", "落合", "岸"],
 };
 
 const DEFAULT_FIREBASE_CONFIG = {
@@ -159,10 +159,10 @@ function generateSlots(start, end) {
 }
 
 function buildCols(staff) {
-  const staffCols = (staff || []).map((name) => ({ id: `staff_${name}`, label: name, type: "éå¸¸" }));
+  const staffCols = (staff || []).map((name) => ({ id: `staff_${name}`, label: name, type: "通常" }));
   const rakuCols = [
-    { id: "raku_1", label: "æ¥½ãã¬â ", type: "æ¥½ãã¬" },
-    { id: "raku_2", label: "æ¥½ãã¬â¡", type: "æ¥½ãã¬" },
+    { id: "raku_1", label: "楽トレ①", type: "楽トレ" },
+    { id: "raku_2", label: "楽トレ②", type: "楽トレ" },
   ];
   return [...staffCols, ...rakuCols];
 }
@@ -338,18 +338,18 @@ function LoginScreen({ settings, onLogin }) {
   return (
     <div style={S.loginBg}>
       <div style={S.loginCenter}>
-        <div style={{ fontSize: 48, marginBottom: 4 }}>ð¥</div>
+        <div style={{ fontSize: 48, marginBottom: 4 }}>🏥</div>
         <h1 style={S.loginTitle}>{settings.clinicName}</h1>
         <div style={{ ...S.loginCard, animation: shake ? "shake 0.4s ease" : "none" }}>
-          <div style={S.loginLabel}>ã¹ã¿ããã­ã°ã¤ã³</div>
+          <div style={S.loginLabel}>スタッフログイン</div>
           <div style={S.loginDivider} />
           <input type="password" maxLength={8} value={pin}
             onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
             onKeyDown={(e) => e.key === "Enter" && handleLogin()}
-            placeholder="PINãå¥å" style={S.pinInput} autoFocus />
-          {error && <div style={S.errorText}>PINãæ­£ããããã¾ãã</div>}
-          <button onClick={handleLogin} onTouchEnd={(e) => { e.preventDefault(); handleLogin(); }} style={S.loginBtn}>ã­ã°ã¤ã³</button>
-          <div style={S.pinHint}>åæPIN: 1234</div>
+            placeholder="PINを入力" style={S.pinInput} autoFocus />
+          {error && <div style={S.errorText}>PINが正しくありません</div>}
+          <button onClick={handleLogin} onTouchEnd={(e) => { e.preventDefault(); handleLogin(); }} style={S.loginBtn}>ログイン</button>
+          <div style={S.pinHint}>初期PIN: 1234</div>
         </div>
       </div>
       <style>{`@keyframes shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-8px)}40%{transform:translateX(8px)}60%{transform:translateX(-6px)}80%{transform:translateX(6px)}}`}</style>
@@ -383,27 +383,27 @@ function CalendarScreen({ calMonth, setCalMonth, settings, holidays, bookings, d
   const isOff = (d) => { const off = dayOff[getDateKey(d)]; return off && off.fullDay; };
 
   const statusColor = fbStatus === "connected" ? "#22c55e" : fbStatus === "connecting" ? "#fbbf24" : fbStatus === "error" ? "#ef4444" : "#94a3b8";
-  const statusLabel = fbStatus === "connected" ? "ð¢ åæä¸­" : fbStatus === "connecting" ? "ð¡ æ¥ç¶ä¸­..." : fbStatus === "error" ? "ð´ æ¥ç¶ã¨ã©ã¼" : "âª ã­ã¼ã«ã«ã®ã¿";
+  const statusLabel = fbStatus === "connected" ? "🟢 同期中" : fbStatus === "connecting" ? "🟡 接続中..." : fbStatus === "error" ? "🔴 接続エラー" : "⚪ ローカルのみ";
 
   return (
     <div style={S.screenBg}>
       <div style={S.header}>
         <div style={{ fontSize: 10, color: statusColor, fontWeight: 600, minWidth: 70 }}>{statusLabel}</div>
         <h1 style={S.headerTitle}>{settings.clinicName}</h1>
-        <button onClick={onSettings} onTouchEnd={(e) => { e.preventDefault(); onSettings(); }} style={S.settingsBtn}>è¨­å®</button>
+        <button onClick={onSettings} onTouchEnd={(e) => { e.preventDefault(); onSettings(); }} style={S.settingsBtn}>設定</button>
       </div>
 
       <div style={S.monthNav}>
-        <button onClick={prevMonth} onTouchEnd={(e) => { e.preventDefault(); prevMonth(); }} style={S.navArrow}>â¹</button>
-        <span style={S.monthLabel}>{year}å¹´{month + 1}æ</span>
-        <button onClick={nextMonth} onTouchEnd={(e) => { e.preventDefault(); nextMonth(); }} style={S.navArrow}>âº</button>
+        <button onClick={prevMonth} onTouchEnd={(e) => { e.preventDefault(); prevMonth(); }} style={S.navArrow}>‹</button>
+        <span style={S.monthLabel}>{year}年{month + 1}月</span>
+        <button onClick={nextMonth} onTouchEnd={(e) => { e.preventDefault(); nextMonth(); }} style={S.navArrow}>›</button>
       </div>
 
       <div style={S.legend}>
-        <span style={S.legendItem}><span style={{ ...S.legendDot, background: "#3b82f6" }} /> éå¸¸æ²»ç</span>
-        <span style={S.legendItem}><span style={{ ...S.legendDot, background: "#22c55e" }} /> æ¥½ãã¬</span>
-        <span style={S.legendItem}><span style={{ background: "#ef4444", width: 10, height: 10, borderRadius: 2, display: "inline-block" }} /> ç¥æ¥</span>
-        <span style={S.legendItem}><span style={{ color: "#9ca3af", fontWeight: 500 }}>â</span> ä¼è¨º</span>
+        <span style={S.legendItem}><span style={{ ...S.legendDot, background: "#3b82f6" }} /> 通常治療</span>
+        <span style={S.legendItem}><span style={{ ...S.legendDot, background: "#22c55e" }} /> 楽トレ</span>
+        <span style={S.legendItem}><span style={{ background: "#ef4444", width: 10, height: 10, borderRadius: 2, display: "inline-block" }} /> 祝日</span>
+        <span style={S.legendItem}><span style={{ color: "#9ca3af", fontWeight: 500 }}>—</span> 休診</span>
       </div>
 
       <div style={S.calGrid}>
@@ -443,8 +443,8 @@ function CalendarScreen({ calMonth, setCalMonth, settings, holidays, bookings, d
 // ============================================================
 function DayScreen({ date, setDate, settings, holidays, bookings, setBookings, dayOff, setDayOff, shifts, setShifts, cols, onBack, showAddModal, setShowAddModal, showEditModal, setShowEditModal, showBlockModal, setShowBlockModal }) {
   const d = parseDate(date);
-  const dateLabel = `${d.getMonth() + 1}æ${d.getDate()}æ¥ï¼${DAYS_JP[d.getDay()]}ï¼`;
-  const fullLabel = `${d.getFullYear()}å¹´${d.getMonth() + 1}æ${d.getDate()}æ¥ï¼${DAYS_JP[d.getDay()]}ï¼`;
+  const dateLabel = `${d.getMonth() + 1}月${d.getDate()}日（${DAYS_JP[d.getDay()]}）`;
+  const fullLabel = `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日（${DAYS_JP[d.getDay()]}）`;
   const hol = holidays[date];
   const isClosed = settings.closedDays.includes(d.getDay()) || (settings.closedDates || []).includes(date);
 
@@ -519,7 +519,7 @@ function DayScreen({ date, setDate, settings, holidays, bookings, setBookings, d
   const gridCols = `44px repeat(${colCount}, 1fr)`;
 
   const renderSlot = (time, col, isAmSection) => {
-    const colStaffName = col.type === "éå¸¸" ? col.label : null;
+    const colStaffName = col.type === "通常" ? col.label : null;
     const staffIsOff = colStaffName && isStaffOff(colStaffName);
 
     if ((isAmSection && amOff) || (!isAmSection && pmOff) || fullDayOff || isClosed || staffIsOff) {
@@ -534,7 +534,7 @@ function DayScreen({ date, setDate, settings, holidays, bookings, setBookings, d
     if (occupied) {
       if (occupied.time === time) {
         const slotsSpan = (occupied.duration || 15) / 15;
-        const isRaku = col.type === "æ¥½ãã¬";
+        const isRaku = col.type === "楽トレ";
         return (
           <div key={`${time}-${col.id}`}
             onClick={() => setShowEditModal({ id: occupied.id, ...occupied })}
@@ -548,11 +548,11 @@ function DayScreen({ date, setDate, settings, holidays, bookings, setBookings, d
               WebkitTapHighlightColor: "transparent",
             }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: "#1f2937", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-              {occupied.isNew && <span style={{ fontSize: 8, background: "#fbbf24", color: "#78350f", borderRadius: 3, padding: "1px 3px", marginRight: 2, fontWeight: 700 }}>æ°è¦</span>}
+              {occupied.isNew && <span style={{ fontSize: 8, background: "#fbbf24", color: "#78350f", borderRadius: 3, padding: "1px 3px", marginRight: 2, fontWeight: 700 }}>新規</span>}
               {occupied.patient}
             </div>
             <div style={{ fontSize: 9, color: "#6b7280" }}>
-              {occupied.duration}å{occupied.staff ? ` / ${occupied.staff}` : ""}
+              {occupied.duration}分{occupied.staff ? ` / ${occupied.staff}` : ""}
             </div>
           </div>
         );
@@ -578,28 +578,28 @@ function DayScreen({ date, setDate, settings, holidays, bookings, setBookings, d
   return (
     <div style={S.screenBg}>
       <div style={S.header}>
-        {TB(onBack, S.backBtn, "â ã«ã¬ã³ãã¼")}
+        {TB(onBack, S.backBtn, "← カレンダー")}
         <span style={S.headerTitle2}>{dateLabel}</span>
-        {TB(goToday, S.todayBtn, "ä»æ¥")}
+        {TB(goToday, S.todayBtn, "今日")}
       </div>
 
       <div style={S.dayNav}>
-        {TB(prevDay, S.dayNavBtn, "â¹ åæ¥")}
+        {TB(prevDay, S.dayNavBtn, "‹ 前日")}
         <span style={S.dayNavLabel}>{fullLabel}</span>
-        {TB(nextDay, S.dayNavBtn, "ç¿æ¥ âº")}
+        {TB(nextDay, S.dayNavBtn, "翌日 ›")}
       </div>
 
       <div style={S.dayStatus}>
-        {hol ? <span style={{ color: "#ef4444", fontWeight: 600 }}>ð {hol}</span>
-          : fullDayOff || isClosed ? <span style={{ color: "#9ca3af", fontWeight: 600 }}>ä¼è¨ºæ¥</span>
-          : <span style={{ color: "#22c55e", fontWeight: 600 }}>â è¨ºçæ¥</span>}
-        {!isClosed && TB(toggleDayOff, fullDayOff ? S.dayBtnActive : S.dayBtn, fullDayOff ? "è¨ºçæ¥ã«ãã" : "ãã®æ¥ãä¼è¨ºã«ãã")}
+        {hol ? <span style={{ color: "#ef4444", fontWeight: 600 }}>🎌 {hol}</span>
+          : fullDayOff || isClosed ? <span style={{ color: "#9ca3af", fontWeight: 600 }}>休診日</span>
+          : <span style={{ color: "#22c55e", fontWeight: 600 }}>✅ 診療日</span>}
+        {!isClosed && TB(toggleDayOff, fullDayOff ? S.dayBtnActive : S.dayBtn, fullDayOff ? "診療日にする" : "この日を休診にする")}
       </div>
 
       {/* Staff shift toggles */}
       {settings.staff && settings.staff.length > 0 && (
         <div style={S.shiftSection}>
-          <div style={S.shiftLabel}>ã¹ã¿ããåºå¤ç¶æ³ï¼ã¿ããã§åæ¿ï¼</div>
+          <div style={S.shiftLabel}>スタッフ出勤状況（タップで切替）</div>
           <div style={S.shiftRow}>
             {settings.staff.map((name) => {
               const off = isStaffOff(name);
@@ -608,9 +608,9 @@ function DayScreen({ date, setDate, settings, holidays, bookings, setBookings, d
                   onClick={() => toggleStaffShift(name)}
                   onTouchEnd={(e) => { e.preventDefault(); toggleStaffShift(name); }}
                   style={off ? S.shiftBtnOff : S.shiftBtnOn}>
-                  <span style={{ fontSize: 14 }}>{off ? "ð«" : "â"}</span>
+                  <span style={{ fontSize: 14 }}>{off ? "🚫" : "✅"}</span>
                   <span style={{ fontSize: 12, fontWeight: 600 }}>{name}</span>
-                  <span style={{ fontSize: 10, color: off ? "#ef4444" : "#059669" }}>{off ? "ä¼ã¿" : "åºå¤"}</span>
+                  <span style={{ fontSize: 10, color: off ? "#ef4444" : "#059669" }}>{off ? "休み" : "出勤"}</span>
                 </button>
               );
             })}
@@ -619,33 +619,33 @@ function DayScreen({ date, setDate, settings, holidays, bookings, setBookings, d
       )}
 
       <div style={{ padding: "4px 8px" }}>
-        {TB(() => setShowBlockModal(true), S.actionBtn, "ð æéããã­ãã¯")}
+        {TB(() => setShowBlockModal(true), S.actionBtn, "🕐 時間をブロック")}
       </div>
 
       {/* Time grid */}
       <div style={S.gridContainer}>
         <div style={{ ...S.gridHeader, gridTemplateColumns: gridCols }}>
-          <div style={S.timeCol}>æå»</div>
+          <div style={S.timeCol}>時刻</div>
           {cols.map((c) => {
-            const staffIsOff = c.type === "éå¸¸" && isStaffOff(c.label);
+            const staffIsOff = c.type === "通常" && isStaffOff(c.label);
             return (
               <div key={c.id} style={{
                 ...S.colHeader,
                 fontSize: colCount > 5 ? 10 : 11,
-                color: staffIsOff ? "#ef4444" : c.type === "æ¥½ãã¬" ? "#059669" : "#1f2937",
-                background: c.type === "æ¥½ãã¬" ? "#f0fdf4" : "#f1f5f9",
+                color: staffIsOff ? "#ef4444" : c.type === "楽トレ" ? "#059669" : "#1f2937",
+                background: c.type === "楽トレ" ? "#f0fdf4" : "#f1f5f9",
                 opacity: staffIsOff ? 0.6 : 1,
               }}>
                 {c.label}
-                {staffIsOff && <div style={{ fontSize: 8, color: "#ef4444" }}>ä¼</div>}
+                {staffIsOff && <div style={{ fontSize: 8, color: "#ef4444" }}>休</div>}
               </div>
             );
           })}
         </div>
 
         <div style={S.sectionHeader}>
-          <span>ð åå ã{settings.amEnd}</span>
-          {TB(toggleAmOff, amOff ? S.sectionBtnActive : S.sectionBtn, amOff ? "åååé" : "ååä¼ã¿")}
+          <span>🌅 午前 〜{settings.amEnd}</span>
+          {TB(toggleAmOff, amOff ? S.sectionBtnActive : S.sectionBtn, amOff ? "午前再開" : "午前休み")}
         </div>
 
         <div style={S.gridBody}>
@@ -658,8 +658,8 @@ function DayScreen({ date, setDate, settings, holidays, bookings, setBookings, d
         </div>
 
         <div style={S.sectionHeader}>
-          <span>ð åå¾</span>
-          {TB(togglePmOff, pmOff ? S.sectionBtnActive : S.sectionBtn, pmOff ? "åå¾åé" : "åå¾ä¼ã¿")}
+          <span>🌙 午後</span>
+          {TB(togglePmOff, pmOff ? S.sectionBtnActive : S.sectionBtn, pmOff ? "午後再開" : "午後休み")}
         </div>
 
         <div style={S.gridBody}>
@@ -684,13 +684,13 @@ function DayScreen({ date, setDate, settings, holidays, bookings, setBookings, d
 // ============================================================
 function AddBookingModal({ date, time, col, cols, settings, onSave, onClose }) {
   const d = parseDate(date);
-  const dateLabel = `${d.getFullYear()}å¹´${d.getMonth() + 1}æ${d.getDate()}æ¥ï¼${DAYS_JP[d.getDay()]}ï¼${time}`;
+  const dateLabel = `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日（${DAYS_JP[d.getDay()]}）${time}`;
   const [selectedCol, setSelectedCol] = useState(col.id);
   const [duration, setDuration] = useState(30);
   const [isNewPatient, setIsNewPatient] = useState(false);
   const [patient, setPatient] = useState("");
   const [memo, setMemo] = useState("");
-  const [staff, setStaff] = useState(col.type === "éå¸¸" ? col.label : "");
+  const [staff, setStaff] = useState(col.type === "通常" ? col.label : "");
 
   const handleSave = useCallback(() => {
     if (!patient.trim()) return;
@@ -702,21 +702,21 @@ function AddBookingModal({ date, time, col, cols, settings, onSave, onClose }) {
     <ModalOverlay onClose={onClose}>
       <div style={S.modal}>
         <div style={S.modalHandle} />
-        <h2 style={S.modalTitle}>äºç´ãè¿½å </h2>
+        <h2 style={S.modalTitle}>予約を追加</h2>
 
         <div style={S.modalField}>
-          <label style={S.modalLabel}>æ¥æ</label>
+          <label style={S.modalLabel}>日時</label>
           <div style={{ color: "#3b82f6", fontWeight: 600 }}>{dateLabel}</div>
         </div>
 
         <div style={S.modalField}>
-          <label style={S.modalLabel}>å</label>
+          <label style={S.modalLabel}>列</label>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {cols.map((c) => (
               <button key={c.id}
-                onClick={() => { setSelectedCol(c.id); if (c.type === "éå¸¸") setStaff(c.label); }}
-                onTouchEnd={(e) => { e.preventDefault(); setSelectedCol(c.id); if (c.type === "éå¸¸") setStaff(c.label); }}
-                style={{ ...(selectedCol === c.id ? S.chipActive : S.chip), background: selectedCol === c.id ? (c.type === "æ¥½ãã¬" ? "#dcfce7" : "#dbeafe") : "white", borderColor: selectedCol === c.id ? (c.type === "æ¥½ãã¬" ? "#22c55e" : "#3b82f6") : "#e5e7eb", color: selectedCol === c.id ? (c.type === "æ¥½ãã¬" ? "#059669" : "#2563eb") : "#374151" }}>
+                onClick={() => { setSelectedCol(c.id); if (c.type === "通常") setStaff(c.label); }}
+                onTouchEnd={(e) => { e.preventDefault(); setSelectedCol(c.id); if (c.type === "通常") setStaff(c.label); }}
+                style={{ ...(selectedCol === c.id ? S.chipActive : S.chip), background: selectedCol === c.id ? (c.type === "楽トレ" ? "#dcfce7" : "#dbeafe") : "white", borderColor: selectedCol === c.id ? (c.type === "楽トレ" ? "#22c55e" : "#3b82f6") : "#e5e7eb", color: selectedCol === c.id ? (c.type === "楽トレ" ? "#059669" : "#2563eb") : "#374151" }}>
                 {c.label}
               </button>
             ))}
@@ -724,37 +724,37 @@ function AddBookingModal({ date, time, col, cols, settings, onSave, onClose }) {
         </div>
 
         <div style={S.modalField}>
-          <label style={S.modalLabel}>æé</label>
-          <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 6 }}>éå¸¸</div>
+          <label style={S.modalLabel}>時間</label>
+          <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 6 }}>通常</div>
           <div style={S.btnGroup}>
             {[15, 30, 45, 60].map((m) => (
               <button key={m}
                 onClick={() => { setDuration(m); setIsNewPatient(false); }}
                 onTouchEnd={(e) => { e.preventDefault(); setDuration(m); setIsNewPatient(false); }}
-                style={duration === m && !isNewPatient ? S.btnGroupActive : S.btnGroupItem}>{m}å</button>
+                style={duration === m && !isNewPatient ? S.btnGroupActive : S.btnGroupItem}>{m}分</button>
             ))}
           </div>
-          <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 6, marginTop: 10 }}>æ°è¦</div>
+          <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 6, marginTop: 10 }}>新規</div>
           <div style={S.btnGroup}>
             <button
               onClick={() => { setDuration(60); setIsNewPatient(true); }}
               onTouchEnd={(e) => { e.preventDefault(); setDuration(60); setIsNewPatient(true); }}
               style={isNewPatient ? S.btnGroupActive : S.btnGroupItem}>
-              60å<div style={{ fontSize: 10, color: isNewPatient ? "#3b82f6" : "#6b7280" }}>æ°è¦</div>
+              60分<div style={{ fontSize: 10, color: isNewPatient ? "#3b82f6" : "#6b7280" }}>新規</div>
             </button>
           </div>
         </div>
 
         <div style={S.modalField}>
-          <label style={S.modalLabel}>æ£èå</label>
-          <input value={patient} onChange={(e) => setPatient(e.target.value)} placeholder="ä¾ï¼ç°ä¸­ å¤ªé" style={S.textInput} autoFocus />
+          <label style={S.modalLabel}>患者名</label>
+          <input value={patient} onChange={(e) => setPatient(e.target.value)} placeholder="例：田中 太郎" style={S.textInput} autoFocus />
         </div>
 
         {settings.staff && settings.staff.length > 0 && (
           <div style={S.modalField}>
-            <label style={S.modalLabel}>æå½ã¹ã¿ããï¼ä»»æï¼</label>
+            <label style={S.modalLabel}>担当スタッフ（任意）</label>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              <button onClick={() => setStaff("")} onTouchEnd={(e) => { e.preventDefault(); setStaff(""); }} style={staff === "" ? S.chipActive : S.chip}>æå®ãªã</button>
+              <button onClick={() => setStaff("")} onTouchEnd={(e) => { e.preventDefault(); setStaff(""); }} style={staff === "" ? S.chipActive : S.chip}>指定なし</button>
               {settings.staff.map((s) => (
                 <button key={s} onClick={() => setStaff(s)} onTouchEnd={(e) => { e.preventDefault(); setStaff(s); }} style={staff === s ? S.chipActive : S.chip}>{s}</button>
               ))}
@@ -763,12 +763,12 @@ function AddBookingModal({ date, time, col, cols, settings, onSave, onClose }) {
         )}
 
         <div style={S.modalField}>
-          <label style={S.modalLabel}>ã¡ã¢ï¼ä»»æï¼</label>
-          <textarea value={memo} onChange={(e) => setMemo(e.target.value)} placeholder="åèãªã©" style={S.textArea} rows={2} />
+          <label style={S.modalLabel}>メモ（任意）</label>
+          <textarea value={memo} onChange={(e) => setMemo(e.target.value)} placeholder="備考など" style={S.textArea} rows={2} />
         </div>
 
-        <button onClick={handleSave} onTouchEnd={(e) => { e.preventDefault(); handleSave(); }} style={S.saveBtn}>â äºç´ãä¿å­</button>
-        <button onClick={onClose} onTouchEnd={(e) => { e.preventDefault(); onClose(); }} style={S.cancelBtn}>ã­ã£ã³ã»ã«</button>
+        <button onClick={handleSave} onTouchEnd={(e) => { e.preventDefault(); handleSave(); }} style={S.saveBtn}>✅ 予約を保存</button>
+        <button onClick={onClose} onTouchEnd={(e) => { e.preventDefault(); onClose(); }} style={S.cancelBtn}>キャンセル</button>
       </div>
     </ModalOverlay>
   );
@@ -794,16 +794,16 @@ function EditBookingModal({ booking, cols, settings, onSave, onDelete, onClose }
     <ModalOverlay onClose={onClose}>
       <div style={S.modal}>
         <div style={S.modalHandle} />
-        <h2 style={S.modalTitle}>äºç´ãç·¨é</h2>
+        <h2 style={S.modalTitle}>予約を編集</h2>
 
         <div style={S.modalField}>
-          <label style={S.modalLabel}>å</label>
+          <label style={S.modalLabel}>列</label>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {cols.map((c) => (
               <button key={c.id}
                 onClick={() => setSelectedCol(c.id)}
                 onTouchEnd={(e) => { e.preventDefault(); setSelectedCol(c.id); }}
-                style={{ ...(selectedCol === c.id ? S.chipActive : S.chip), background: selectedCol === c.id ? (c.type === "æ¥½ãã¬" ? "#dcfce7" : "#dbeafe") : "white", borderColor: selectedCol === c.id ? (c.type === "æ¥½ãã¬" ? "#22c55e" : "#3b82f6") : "#e5e7eb", color: selectedCol === c.id ? (c.type === "æ¥½ãã¬" ? "#059669" : "#2563eb") : "#374151" }}>
+                style={{ ...(selectedCol === c.id ? S.chipActive : S.chip), background: selectedCol === c.id ? (c.type === "楽トレ" ? "#dcfce7" : "#dbeafe") : "white", borderColor: selectedCol === c.id ? (c.type === "楽トレ" ? "#22c55e" : "#3b82f6") : "#e5e7eb", color: selectedCol === c.id ? (c.type === "楽トレ" ? "#059669" : "#2563eb") : "#374151" }}>
                 {c.label}
               </button>
             ))}
@@ -811,37 +811,37 @@ function EditBookingModal({ booking, cols, settings, onSave, onDelete, onClose }
         </div>
 
         <div style={S.modalField}>
-          <label style={S.modalLabel}>æé</label>
-          <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 6 }}>éå¸¸</div>
+          <label style={S.modalLabel}>時間</label>
+          <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 6 }}>通常</div>
           <div style={S.btnGroup}>
             {[15, 30, 45, 60].map((m) => (
               <button key={m}
                 onClick={() => { setDuration(m); setIsNewPatient(false); }}
                 onTouchEnd={(e) => { e.preventDefault(); setDuration(m); setIsNewPatient(false); }}
-                style={duration === m && !isNewPatient ? S.btnGroupActive : S.btnGroupItem}>{m}å</button>
+                style={duration === m && !isNewPatient ? S.btnGroupActive : S.btnGroupItem}>{m}分</button>
             ))}
           </div>
-          <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 6, marginTop: 10 }}>æ°è¦</div>
+          <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 6, marginTop: 10 }}>新規</div>
           <div style={S.btnGroup}>
             <button
               onClick={() => { setDuration(60); setIsNewPatient(true); }}
               onTouchEnd={(e) => { e.preventDefault(); setDuration(60); setIsNewPatient(true); }}
               style={isNewPatient ? S.btnGroupActive : S.btnGroupItem}>
-              60å<div style={{ fontSize: 10, color: isNewPatient ? "#3b82f6" : "#6b7280" }}>æ°è¦</div>
+              60分<div style={{ fontSize: 10, color: isNewPatient ? "#3b82f6" : "#6b7280" }}>新規</div>
             </button>
           </div>
         </div>
 
         <div style={S.modalField}>
-          <label style={S.modalLabel}>æ£èå</label>
+          <label style={S.modalLabel}>患者名</label>
           <input value={patient} onChange={(e) => setPatient(e.target.value)} style={S.textInput} />
         </div>
 
         {settings.staff && settings.staff.length > 0 && (
           <div style={S.modalField}>
-            <label style={S.modalLabel}>æå½ã¹ã¿ãã</label>
+            <label style={S.modalLabel}>担当スタッフ</label>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              <button onClick={() => setStaff("")} onTouchEnd={(e) => { e.preventDefault(); setStaff(""); }} style={staff === "" ? S.chipActive : S.chip}>æå®ãªã</button>
+              <button onClick={() => setStaff("")} onTouchEnd={(e) => { e.preventDefault(); setStaff(""); }} style={staff === "" ? S.chipActive : S.chip}>指定なし</button>
               {settings.staff.map((s) => (
                 <button key={s} onClick={() => setStaff(s)} onTouchEnd={(e) => { e.preventDefault(); setStaff(s); }} style={staff === s ? S.chipActive : S.chip}>{s}</button>
               ))}
@@ -850,13 +850,13 @@ function EditBookingModal({ booking, cols, settings, onSave, onDelete, onClose }
         )}
 
         <div style={S.modalField}>
-          <label style={S.modalLabel}>ã¡ã¢</label>
+          <label style={S.modalLabel}>メモ</label>
           <textarea value={memo} onChange={(e) => setMemo(e.target.value)} style={S.textArea} rows={2} />
         </div>
 
-        <button onClick={handleSave} onTouchEnd={(e) => { e.preventDefault(); handleSave(); }} style={S.saveBtn}>â æ´æ°</button>
-        <button onClick={onDelete} onTouchEnd={(e) => { e.preventDefault(); onDelete(); }} style={S.deleteBtn}>ðï¸ åé¤</button>
-        <button onClick={onClose} onTouchEnd={(e) => { e.preventDefault(); onClose(); }} style={S.cancelBtn}>ã­ã£ã³ã»ã«</button>
+        <button onClick={handleSave} onTouchEnd={(e) => { e.preventDefault(); handleSave(); }} style={S.saveBtn}>✅ 更新</button>
+        <button onClick={onDelete} onTouchEnd={(e) => { e.preventDefault(); onDelete(); }} style={S.deleteBtn}>🗑️ 削除</button>
+        <button onClick={onClose} onTouchEnd={(e) => { e.preventDefault(); onClose(); }} style={S.cancelBtn}>キャンセル</button>
       </div>
     </ModalOverlay>
   );
@@ -875,17 +875,17 @@ function BlockModal({ cols, onSave, onClose, settings }) {
     <ModalOverlay onClose={onClose}>
       <div style={S.modal}>
         <div style={S.modalHandle} />
-        <h2 style={S.modalTitle}>æéå¸¯ããã­ãã¯</h2>
+        <h2 style={S.modalTitle}>時間帯をブロック</h2>
         <div style={S.modalField}>
-          <label style={S.modalLabel}>éå§æé</label>
+          <label style={S.modalLabel}>開始時間</label>
           <input type="time" value={start} onChange={(e) => setStart(e.target.value)} style={S.textInput} />
         </div>
         <div style={S.modalField}>
-          <label style={S.modalLabel}>çµäºæé</label>
+          <label style={S.modalLabel}>終了時間</label>
           <input type="time" value={end} onChange={(e) => setEnd(e.target.value)} style={S.textInput} />
         </div>
         <div style={S.modalField}>
-          <label style={S.modalLabel}>å¯¾è±¡å</label>
+          <label style={S.modalLabel}>対象列</label>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {cols.map((c) => (
               <button key={c.id}
@@ -898,8 +898,8 @@ function BlockModal({ cols, onSave, onClose, settings }) {
         <button
           onClick={() => onSave({ start, end, colIds: selCols })}
           onTouchEnd={(e) => { e.preventDefault(); onSave({ start, end, colIds: selCols }); }}
-          style={S.saveBtn}>ãã­ãã¯è¨­å®</button>
-        <button onClick={onClose} onTouchEnd={(e) => { e.preventDefault(); onClose(); }} style={S.cancelBtn}>ã­ã£ã³ã»ã«</button>
+          style={S.saveBtn}>ブロック設定</button>
+        <button onClick={onClose} onTouchEnd={(e) => { e.preventDefault(); onClose(); }} style={S.cancelBtn}>キャンセル</button>
       </div>
     </ModalOverlay>
   );
@@ -946,9 +946,9 @@ function SettingsScreen({ settings, setSettings, holidays, bookings, setBookings
   const removeClosedDate = (d) => { const u = closedDates.filter((x) => x !== d); setClosedDates(u); setSettings((s) => ({ ...s, closedDates: u })); };
 
   const changePin = () => {
-    if (currentPin !== settings.pin) { setPinMsg("ç¾å¨ã®PINãæ­£ããããã¾ãã"); return; }
-    if (newPin.length < 4 || newPin.length > 8) { setPinMsg("PINã¯4ã8æ¡ã§å¥åãã¦ãã ãã"); return; }
-    setSettings((s) => ({ ...s, pin: newPin })); setPinMsg("PINãå¤æ´ãã¾ããï¼"); setCurrentPin(""); setNewPin("");
+    if (currentPin !== settings.pin) { setPinMsg("現在のPINが正しくありません"); return; }
+    if (newPin.length < 4 || newPin.length > 8) { setPinMsg("PINは4〜8桁で入力してください"); return; }
+    setSettings((s) => ({ ...s, pin: newPin })); setPinMsg("PINを変更しました！"); setCurrentPin(""); setNewPin("");
   };
 
   const addStaff = () => { const name = newStaffName.trim(); if (!name || staffList.includes(name)) return; const u = [...staffList, name]; setStaffList(u); setSettings((s) => ({ ...s, staff: u })); setNewStaffName(""); };
@@ -964,19 +964,19 @@ function SettingsScreen({ settings, setSettings, holidays, bookings, setBookings
   const handleRestore = (e) => {
     const file = e.target.files[0]; if (!file) return;
     const reader = new FileReader();
-    reader.onload = (ev) => { try { const data = JSON.parse(ev.target.result); if (data.settings) setSettings(data.settings); if (data.bookings) setBookings(data.bookings); if (data.shifts) setShifts(data.shifts); alert("å¾©åãã¾ããï¼"); } catch { alert("ãã¡ã¤ã«ãæ­£ããããã¾ãã"); } };
+    reader.onload = (ev) => { try { const data = JSON.parse(ev.target.result); if (data.settings) setSettings(data.settings); if (data.bookings) setBookings(data.bookings); if (data.shifts) setShifts(data.shifts); alert("復元しました！"); } catch { alert("ファイルが正しくありません"); } };
     reader.readAsText(file);
   };
 
   const handleFirebaseSave = async () => {
     setFbConfig(tempFbConfig);
     if (tempFbConfig.databaseURL) {
-      setFbSaveMsg("æ¥ç¶ãã¹ãä¸­...");
+      setFbSaveMsg("接続テスト中...");
       await connectFirebase(tempFbConfig);
-      setFbSaveMsg("æ¥ç¶è¨­å®ãä¿å­ãã¾ãã");
+      setFbSaveMsg("接続設定を保存しました");
     } else {
       disconnectFirebase();
-      setFbSaveMsg("Firebaseæ¥ç¶ãè§£é¤ãã¾ãã");
+      setFbSaveMsg("Firebase接続を解除しました");
     }
     setTimeout(() => setFbSaveMsg(""), 3000);
   };
@@ -986,7 +986,7 @@ function SettingsScreen({ settings, setSettings, holidays, bookings, setBookings
     setTempFbConfig(empty);
     setFbConfig(empty);
     disconnectFirebase();
-    setFbSaveMsg("Firebaseæ¥ç¶ãè§£é¤ãã¾ãã");
+    setFbSaveMsg("Firebase接続を解除しました");
     setTimeout(() => setFbSaveMsg(""), 3000);
   };
 
@@ -1005,13 +1005,13 @@ function SettingsScreen({ settings, setSettings, holidays, bookings, setBookings
   };
 
   const fbStatusColor = fbStatus === "connected" ? "#22c55e" : fbStatus === "connecting" ? "#fbbf24" : fbStatus === "error" ? "#ef4444" : "#94a3b8";
-  const fbStatusText = fbStatus === "connected" ? "ð¢ æ¥ç¶ä¸­ï¼ãªã¢ã«ã¿ã¤ã åææå¹ï¼" : fbStatus === "connecting" ? "ð¡ æ¥ç¶ãã¹ãä¸­..." : fbStatus === "error" ? "ð´ æ¥ç¶ã¨ã©ã¼ï¼è¨­å®ãç¢ºèªãã¦ãã ããï¼" : "âª æªæ¥ç¶ï¼ã­ã¼ã«ã«ä¿å­ã®ã¿ï¼";
+  const fbStatusText = fbStatus === "connected" ? "🟢 接続中（リアルタイム同期有効）" : fbStatus === "connecting" ? "🟡 接続テスト中..." : fbStatus === "error" ? "🔴 接続エラー（設定を確認してください）" : "⚪ 未接続（ローカル保存のみ）";
 
   return (
     <div style={S.screenBg}>
       <div style={S.header}>
-        <button onClick={onBack} onTouchEnd={(e) => { e.preventDefault(); onBack(); }} style={S.backBtn}>â æ»ã</button>
-        <span style={S.headerTitle2}>è¨­å® <span style={{ fontSize: 12, color: "#93c5fd" }}>v5.0</span></span>
+        <button onClick={onBack} onTouchEnd={(e) => { e.preventDefault(); onBack(); }} style={S.backBtn}>← 戻る</button>
+        <span style={S.headerTitle2}>設定 <span style={{ fontSize: 12, color: "#93c5fd" }}>v5.0</span></span>
         <div style={{ width: 60 }} />
       </div>
 
@@ -1019,9 +1019,9 @@ function SettingsScreen({ settings, setSettings, holidays, bookings, setBookings
 
         {/* ==================== FIREBASE CONFIG ==================== */}
         <div style={{ ...S.card, border: `2px solid ${fbStatusColor}` }}>
-          <h3 style={S.cardTitle}>ð¥ Firebase ãªã¢ã«ã¿ã¤ã åæ</h3>
+          <h3 style={S.cardTitle}>🔥 Firebase リアルタイム同期</h3>
           <p style={{ fontSize: 12, color: "#6b7280", marginBottom: 8 }}>
-            Firebase Realtime Databaseã«æ¥ç¶ããã¨ãå¨ã¹ã¿ããã®ç«¯æ«ã§ãã¼ã¿ããªã¢ã«ã¿ã¤ã ã«å±æããã¾ãã
+            Firebase Realtime Databaseに接続すると、全スタッフの端末でデータがリアルタイムに共有されます。
           </p>
 
           <div style={{ padding: "8px 12px", borderRadius: 8, background: fbStatus === "connected" ? "#f0fdf4" : fbStatus === "error" ? "#fef2f2" : "#f8fafc", marginBottom: 12, fontSize: 13, fontWeight: 600, color: fbStatusColor }}>
@@ -1029,7 +1029,7 @@ function SettingsScreen({ settings, setSettings, holidays, bookings, setBookings
           </div>
 
           {[
-            { key: "databaseURL", label: "Database URLï¼å¿é ï¼", placeholder: "https://xxxxx.firebaseio.com" },
+            { key: "databaseURL", label: "Database URL（必須）", placeholder: "https://xxxxx.firebaseio.com" },
             { key: "apiKey", label: "API Key", placeholder: "AIzaSy..." },
             { key: "authDomain", label: "Auth Domain", placeholder: "xxxxx.firebaseapp.com" },
             { key: "projectId", label: "Project ID", placeholder: "my-clinic-app" },
@@ -1045,26 +1045,26 @@ function SettingsScreen({ settings, setSettings, holidays, bookings, setBookings
             </div>
           ))}
 
-          {fbSaveMsg && <div style={{ fontSize: 13, color: fbSaveMsg.includes("ã¨ã©ã¼") ? "#ef4444" : "#22c55e", marginBottom: 8, fontWeight: 600 }}>{fbSaveMsg}</div>}
+          {fbSaveMsg && <div style={{ fontSize: 13, color: fbSaveMsg.includes("エラー") ? "#ef4444" : "#22c55e", marginBottom: 8, fontWeight: 600 }}>{fbSaveMsg}</div>}
 
           <div style={{ display: "flex", gap: 8 }}>
             <button onClick={handleFirebaseSave} onTouchEnd={(e) => { e.preventDefault(); handleFirebaseSave(); }} style={{ ...S.saveBtn, flex: 1 }}>
-              {fbConnected ? "ð åæ¥ç¶" : "ð¥ æ¥ç¶ãã¹ã & ä¿å­"}
+              {fbConnected ? "🔄 再接続" : "🔥 接続テスト & 保存"}
             </button>
             {fbConnected && (
               <button onClick={handleFirebaseDisconnect} onTouchEnd={(e) => { e.preventDefault(); handleFirebaseDisconnect(); }} style={{ ...S.deleteBtn, flex: 1 }}>
-                æ¥ç¶è§£é¤
+                接続解除
               </button>
             )}
           </div>
 
           <details style={{ marginTop: 12 }}>
-            <summary style={{ fontSize: 12, color: "#6b7280", cursor: "pointer", fontWeight: 600 }}>ð Firebaseè¨­å®æé </summary>
+            <summary style={{ fontSize: 12, color: "#6b7280", cursor: "pointer", fontWeight: 600 }}>📖 Firebase設定手順</summary>
             <div style={{ fontSize: 11, color: "#6b7280", lineHeight: 1.8, marginTop: 8, padding: "8px 12px", background: "#f9fafb", borderRadius: 8 }}>
-              1. <a href="https://console.firebase.google.com/" target="_blank" rel="noopener noreferrer" style={{ color: "#3b82f6" }}>Firebase Console</a> ã«ã¢ã¯ã»ã¹<br/>
-              2.ããã­ã¸ã§ã¯ããä½æãã§ãã­ã¸ã§ã¯ãä½æ<br/>
-              3. å·¦ã¡ãã¥ã¼ãæ§ç¯ãâãRealtime Databaseãâããã¼ã¿ãã¼ã¹ãä½æã<br/>
-              4. ã«ã¼ã«ãä»¥ä¸ã«å¤æ´ãã¦ãå¬éãï¼<br/>
+              1. <a href="https://console.firebase.google.com/" target="_blank" rel="noopener noreferrer" style={{ color: "#3b82f6" }}>Firebase Console</a> にアクセス<br/>
+              2.「プロジェクトを作成」でプロジェクト作成<br/>
+              3. 左メニュー「構築」→「Realtime Database」→「データベースを作成」<br/>
+              4. ルールを以下に変更して「公開」：<br/>
               <code style={{ display: "block", padding: "6px 8px", background: "#e5e7eb", borderRadius: 4, margin: "4px 0", fontSize: 10, whiteSpace: "pre" }}>
 {`{
   "rules": {
@@ -1073,50 +1073,50 @@ function SettingsScreen({ settings, setSettings, holidays, bookings, setBookings
   }
 }`}
               </code>
-              5. æ­¯è»ã¢ã¤ã³ã³âããã­ã¸ã§ã¯ãã®è¨­å®ãâãå¨è¬ãâããã¤ã¢ããªãã§ã¦ã§ãã¢ããªãè¿½å <br/>
-              6. è¡¨ç¤ºãããfirebaseConfigã®åå¤ãããã«å¥å<br/>
-              7.ãæ¥ç¶ãã¹ã & ä¿å­ããã¿ãã
+              5. 歯車アイコン→「プロジェクトの設定」→「全般」→「マイアプリ」でウェブアプリを追加<br/>
+              6. 表示されるfirebaseConfigの各値をここに入力<br/>
+              7.「接続テスト & 保存」をタップ
             </div>
           </details>
         </div>
 
         {/* Clinic name */}
         <div style={S.card}>
-          <h3 style={S.cardTitle}>ã¯ãªããã¯å</h3>
+          <h3 style={S.cardTitle}>クリニック名</h3>
           <input value={tempClinicName} onChange={(e) => setTempClinicName(e.target.value)} style={S.textInput} />
-          <button onClick={saveClinicName} onTouchEnd={(e) => { e.preventDefault(); saveClinicName(); }} style={S.smallSaveBtn}>{saved.name ? "â ä¿å­ãã¾ãã" : "ä¿å­"}</button>
+          <button onClick={saveClinicName} onTouchEnd={(e) => { e.preventDefault(); saveClinicName(); }} style={S.smallSaveBtn}>{saved.name ? "✅ 保存しました" : "保存"}</button>
         </div>
 
         {/* Hours */}
         <div style={S.card}>
-          <h3 style={S.cardTitle}>è¨ºçæé</h3>
+          <h3 style={S.cardTitle}>診療時間</h3>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-            <span style={{ fontSize: 20 }}>ð</span><span style={{ fontWeight: 600 }}>åå</span>
+            <span style={{ fontSize: 20 }}>🌅</span><span style={{ fontWeight: 600 }}>午前</span>
           </div>
           <div style={S.timeRow}>
-            <span>éå§</span><input type="time" value={tempAmStart} onChange={(e) => setTempAmStart(e.target.value)} style={S.timeInput} />
-            <span>ã çµäº</span><input type="time" value={tempAmEnd} onChange={(e) => setTempAmEnd(e.target.value)} style={S.timeInput} />
+            <span>開始</span><input type="time" value={tempAmStart} onChange={(e) => setTempAmStart(e.target.value)} style={S.timeInput} />
+            <span>〜 終了</span><input type="time" value={tempAmEnd} onChange={(e) => setTempAmEnd(e.target.value)} style={S.timeInput} />
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "12px 0 8px" }}>
-            <span style={{ fontSize: 20 }}>ð</span><span style={{ fontWeight: 600 }}>åå¾</span>
+            <span style={{ fontSize: 20 }}>🌙</span><span style={{ fontWeight: 600 }}>午後</span>
           </div>
           <div style={S.timeRow}>
-            <span>éå§</span><input type="time" value={tempPmStart} onChange={(e) => setTempPmStart(e.target.value)} style={S.timeInput} />
-            <span>ã çµäº</span><input type="time" value={tempPmEnd} onChange={(e) => setTempPmEnd(e.target.value)} style={S.timeInput} />
+            <span>開始</span><input type="time" value={tempPmStart} onChange={(e) => setTempPmStart(e.target.value)} style={S.timeInput} />
+            <span>〜 終了</span><input type="time" value={tempPmEnd} onChange={(e) => setTempPmEnd(e.target.value)} style={S.timeInput} />
           </div>
-          <div style={{ fontSize: 12, color: "#9ca3af", marginTop: 8 }}>â» çµäºã¯æå¾ã®æ ã®éå§æå»ï¼15ååä½ï¼</div>
-          <button onClick={saveHours} onTouchEnd={(e) => { e.preventDefault(); saveHours(); }} style={S.smallSaveBtn}>{saved.hours ? "â ä¿å­ãã¾ãã" : "ä¿å­"}</button>
+          <div style={{ fontSize: 12, color: "#9ca3af", marginTop: 8 }}>※ 終了は最後の枠の開始時刻（15分単位）</div>
+          <button onClick={saveHours} onTouchEnd={(e) => { e.preventDefault(); saveHours(); }} style={S.smallSaveBtn}>{saved.hours ? "✅ 保存しました" : "保存"}</button>
         </div>
 
         {/* Staff management */}
         <div style={S.card}>
-          <h3 style={S.cardTitle}>ð¤ ã¹ã¿ããç®¡ç</h3>
-          <p style={{ fontSize: 12, color: "#6b7280", marginBottom: 8 }}>ç»é²ããã¹ã¿ããåãäºç´è¡¨ã®éå¸¸æ²»çåã«ãªãã¾ãã</p>
+          <h3 style={S.cardTitle}>👤 スタッフ管理</h3>
+          <p style={{ fontSize: 12, color: "#6b7280", marginBottom: 8 }}>登録したスタッフ名が予約表の通常治療列になります。</p>
           <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12 }}>
-            <input value={newStaffName} onChange={(e) => setNewStaffName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addStaff()} placeholder="ã¹ã¿ããåãå¥å" style={{ ...S.textInput, flex: 1 }} />
-            <button onClick={addStaff} onTouchEnd={(e) => { e.preventDefault(); addStaff(); }} style={S.addBtn}>è¿½å </button>
+            <input value={newStaffName} onChange={(e) => setNewStaffName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addStaff()} placeholder="スタッフ名を入力" style={{ ...S.textInput, flex: 1 }} />
+            <button onClick={addStaff} onTouchEnd={(e) => { e.preventDefault(); addStaff(); }} style={S.addBtn}>追加</button>
           </div>
-          {staffList.length === 0 ? <div style={{ color: "#9ca3af", textAlign: "center", padding: 8 }}>ã¹ã¿ããæªç»é²</div> : (
+          {staffList.length === 0 ? <div style={{ color: "#9ca3af", textAlign: "center", padding: 8 }}>スタッフ未登録</div> : (
             <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
               {staffList.map((name, idx) => (
                 <div key={name} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 10px", background: "#f9fafb", borderRadius: 8, border: "1px solid #e5e7eb" }}>
@@ -1125,9 +1125,9 @@ function SettingsScreen({ settings, setSettings, holidays, bookings, setBookings
                     <span style={{ fontSize: 14, fontWeight: 600, color: "#1f2937" }}>{name}</span>
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                    <button onClick={() => moveStaff(idx, -1)} onTouchEnd={(e) => { e.preventDefault(); moveStaff(idx, -1); }} disabled={idx === 0} style={{ border: "none", background: "none", cursor: idx === 0 ? "default" : "pointer", color: idx === 0 ? "#d1d5db" : "#6b7280", fontSize: 16, padding: "2px 6px" }}>â</button>
-                    <button onClick={() => moveStaff(idx, 1)} onTouchEnd={(e) => { e.preventDefault(); moveStaff(idx, 1); }} disabled={idx === staffList.length - 1} style={{ border: "none", background: "none", cursor: idx === staffList.length - 1 ? "default" : "pointer", color: idx === staffList.length - 1 ? "#d1d5db" : "#6b7280", fontSize: 16, padding: "2px 6px" }}>â</button>
-                    <button onClick={() => removeStaff(name)} onTouchEnd={(e) => { e.preventDefault(); removeStaff(name); }} style={{ border: "none", background: "none", color: "#ef4444", cursor: "pointer", fontSize: 18, padding: "2px 6px" }}>Ã</button>
+                    <button onClick={() => moveStaff(idx, -1)} onTouchEnd={(e) => { e.preventDefault(); moveStaff(idx, -1); }} disabled={idx === 0} style={{ border: "none", background: "none", cursor: idx === 0 ? "default" : "pointer", color: idx === 0 ? "#d1d5db" : "#6b7280", fontSize: 16, padding: "2px 6px" }}>↑</button>
+                    <button onClick={() => moveStaff(idx, 1)} onTouchEnd={(e) => { e.preventDefault(); moveStaff(idx, 1); }} disabled={idx === staffList.length - 1} style={{ border: "none", background: "none", cursor: idx === staffList.length - 1 ? "default" : "pointer", color: idx === staffList.length - 1 ? "#d1d5db" : "#6b7280", fontSize: 16, padding: "2px 6px" }}>↓</button>
+                    <button onClick={() => removeStaff(name)} onTouchEnd={(e) => { e.preventDefault(); removeStaff(name); }} style={{ border: "none", background: "none", color: "#ef4444", cursor: "pointer", fontSize: 18, padding: "2px 6px" }}>×</button>
                   </div>
                 </div>
               ))}
@@ -1137,19 +1137,19 @@ function SettingsScreen({ settings, setSettings, holidays, bookings, setBookings
 
         {/* Shift Calendar */}
         <div style={S.card}>
-          <h3 style={S.cardTitle}>ð ã·ããç®¡ç</h3>
-          <p style={{ fontSize: 12, color: "#6b7280", marginBottom: 10 }}>ã¹ã¿ããã®åºå¤/ä¼ã¿ãæåä½ã§ç®¡çãä¼ã¿ã«ããã¨äºç´è¡¨ã®è©²å½åãèµ¤ããªãã¾ãã</p>
+          <h3 style={S.cardTitle}>📅 シフト管理</h3>
+          <p style={{ fontSize: 12, color: "#6b7280", marginBottom: 10 }}>スタッフの出勤/休みを月単位で管理。休みにすると予約表の該当列が赤くなります。</p>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-            <button onClick={prevShiftMonth} onTouchEnd={(e) => { e.preventDefault(); prevShiftMonth(); }} style={S.navArrowSm}>â¹</button>
-            <span style={{ fontWeight: 700, fontSize: 15, color: "#1f2937" }}>{sy}å¹´{sm + 1}æ</span>
-            <button onClick={nextShiftMonth} onTouchEnd={(e) => { e.preventDefault(); nextShiftMonth(); }} style={S.navArrowSm}>âº</button>
+            <button onClick={prevShiftMonth} onTouchEnd={(e) => { e.preventDefault(); prevShiftMonth(); }} style={S.navArrowSm}>‹</button>
+            <span style={{ fontWeight: 700, fontSize: 15, color: "#1f2937" }}>{sy}年{sm + 1}月</span>
+            <button onClick={nextShiftMonth} onTouchEnd={(e) => { e.preventDefault(); nextShiftMonth(); }} style={S.navArrowSm}>›</button>
           </div>
-          {staffList.length === 0 ? <div style={{ color: "#9ca3af", textAlign: "center", padding: 16 }}>ã¹ã¿ãããåã«ç»é²ãã¦ãã ãã</div> : (
+          {staffList.length === 0 ? <div style={{ color: "#9ca3af", textAlign: "center", padding: 16 }}>スタッフを先に登録してください</div> : (
             <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
               <table style={{ borderCollapse: "collapse", fontSize: 11, minWidth: "100%" }}>
                 <thead>
                   <tr>
-                    <th style={S.shiftTh}>æ¥ä»</th>
+                    <th style={S.shiftTh}>日付</th>
                     {staffList.map((name) => <th key={name} style={S.shiftTh}>{name}</th>)}
                   </tr>
                 </thead>
@@ -1179,7 +1179,7 @@ function SettingsScreen({ settings, setSettings, holidays, bookings, setBookings
                                   fontWeight: 600, fontSize: 11,
                                   WebkitTapHighlightColor: "transparent",
                                 }}>
-                                {isOff ? "ä¼" : "â"}
+                                {isOff ? "休" : "○"}
                               </button>
                             </td>
                           );
@@ -1195,7 +1195,7 @@ function SettingsScreen({ settings, setSettings, holidays, bookings, setBookings
 
         {/* Closed days */}
         <div style={S.card}>
-          <h3 style={S.cardTitle}>å®ä¼ææ¥</h3>
+          <h3 style={S.cardTitle}>定休曜日</h3>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
             {DAYS_JP.map((d, i) => (
               <button key={d}
@@ -1211,22 +1211,22 @@ function SettingsScreen({ settings, setSettings, holidays, bookings, setBookings
                 }}>{d}</button>
             ))}
           </div>
-          <button onClick={saveClosedDays} onTouchEnd={(e) => { e.preventDefault(); saveClosedDays(); }} style={S.smallSaveBtn}>{saved.closed ? "â ä¿å­ãã¾ãã" : "ä¿å­"}</button>
+          <button onClick={saveClosedDays} onTouchEnd={(e) => { e.preventDefault(); saveClosedDays(); }} style={S.smallSaveBtn}>{saved.closed ? "✅ 保存しました" : "保存"}</button>
         </div>
 
         {/* Closed dates */}
         <div style={S.card}>
-          <h3 style={S.cardTitle}>ä¼è¨ºæ¥ï¼ç¹å®æ¥ï¼</h3>
+          <h3 style={S.cardTitle}>休診日（特定日）</h3>
           <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12 }}>
             <input type="date" value={newClosedDate} onChange={(e) => setNewClosedDate(e.target.value)} style={S.timeInput} />
-            <button onClick={addClosedDate} onTouchEnd={(e) => { e.preventDefault(); addClosedDate(); }} style={S.addBtn}>è¿½å </button>
+            <button onClick={addClosedDate} onTouchEnd={(e) => { e.preventDefault(); addClosedDate(); }} style={S.addBtn}>追加</button>
           </div>
-          {closedDates.length === 0 ? <div style={{ color: "#9ca3af", textAlign: "center" }}>ç»é²ãªã</div> : (
+          {closedDates.length === 0 ? <div style={{ color: "#9ca3af", textAlign: "center" }}>登録なし</div> : (
             <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
               {closedDates.map((d) => (
                 <div key={d} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 8px", background: "#f9fafb", borderRadius: 6 }}>
-                  <span style={{ fontSize: 14 }}>{d}ï¼{DAYS_JP[dayOfWeek(d)]}ï¼</span>
-                  <button onClick={() => removeClosedDate(d)} onTouchEnd={(e) => { e.preventDefault(); removeClosedDate(d); }} style={{ border: "none", background: "none", color: "#ef4444", cursor: "pointer", fontSize: 18 }}>Ã</button>
+                  <span style={{ fontSize: 14 }}>{d}（{DAYS_JP[dayOfWeek(d)]}）</span>
+                  <button onClick={() => removeClosedDate(d)} onTouchEnd={(e) => { e.preventDefault(); removeClosedDate(d); }} style={{ border: "none", background: "none", color: "#ef4444", cursor: "pointer", fontSize: 18 }}>×</button>
                 </div>
               ))}
             </div>
@@ -1235,12 +1235,12 @@ function SettingsScreen({ settings, setSettings, holidays, bookings, setBookings
 
         {/* Holidays */}
         <div style={S.card}>
-          <h3 style={S.cardTitle}>ç¥æ¥ä¸è¦§ï¼èªåè¨­å®ã»å¤æ´ä¸å¯ï¼</h3>
+          <h3 style={S.cardTitle}>祝日一覧（自動設定・変更不可）</h3>
           <div style={{ maxHeight: 200, overflow: "auto" }}>
             {allHolidays.slice(0, 20).map((h) => (
               <div key={h.date + h.name} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #f3f4f6", fontSize: 13 }}>
                 <span>{h.name}</span>
-                <span style={{ color: "#6b7280" }}>{h.date.replace(/-/g, "/")}ï¼{DAYS_JP[dayOfWeek(h.date)]}ï¼</span>
+                <span style={{ color: "#6b7280" }}>{h.date.replace(/-/g, "/")}（{DAYS_JP[dayOfWeek(h.date)]}）</span>
               </div>
             ))}
           </div>
@@ -1248,30 +1248,30 @@ function SettingsScreen({ settings, setSettings, holidays, bookings, setBookings
 
         {/* PIN */}
         <div style={S.card}>
-          <h3 style={S.cardTitle}>PINå¤æ´</h3>
+          <h3 style={S.cardTitle}>PIN変更</h3>
           <div style={S.modalField}>
-            <label style={S.modalLabel}>ç¾å¨ã®PIN</label>
-            <input type="password" value={currentPin} onChange={(e) => setCurrentPin(e.target.value.replace(/\D/g, ""))} placeholder="ç¾å¨ã®PIN" style={S.textInput} maxLength={8} />
+            <label style={S.modalLabel}>現在のPIN</label>
+            <input type="password" value={currentPin} onChange={(e) => setCurrentPin(e.target.value.replace(/\D/g, ""))} placeholder="現在のPIN" style={S.textInput} maxLength={8} />
           </div>
           <div style={S.modalField}>
-            <label style={S.modalLabel}>æ°ããPINï¼4ã8æ¡ï¼</label>
-            <input type="password" value={newPin} onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ""))} placeholder="æ°ããPIN" style={S.textInput} maxLength={8} />
+            <label style={S.modalLabel}>新しいPIN（4〜8桁）</label>
+            <input type="password" value={newPin} onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ""))} placeholder="新しいPIN" style={S.textInput} maxLength={8} />
           </div>
-          {pinMsg && <div style={{ color: pinMsg.includes("å¤æ´") ? "#22c55e" : "#ef4444", fontSize: 13, marginBottom: 8 }}>{pinMsg}</div>}
-          <button onClick={changePin} onTouchEnd={(e) => { e.preventDefault(); changePin(); }} style={S.outlineBtn}>PINãå¤æ´ãã</button>
+          {pinMsg && <div style={{ color: pinMsg.includes("変更") ? "#22c55e" : "#ef4444", fontSize: 13, marginBottom: 8 }}>{pinMsg}</div>}
+          <button onClick={changePin} onTouchEnd={(e) => { e.preventDefault(); changePin(); }} style={S.outlineBtn}>PINを変更する</button>
         </div>
 
         {/* Backup */}
         <div style={S.card}>
-          <h3 style={S.cardTitle}>ããã¯ã¢ãã & å¾©å</h3>
-          <p style={{ fontSize: 13, color: "#6b7280", marginBottom: 12 }}>ãã¼ã¿ã®ããã¯ã¢ããã¨å¾©åãã§ãã¾ãã</p>
+          <h3 style={S.cardTitle}>バックアップ & 復元</h3>
+          <p style={{ fontSize: 13, color: "#6b7280", marginBottom: 12 }}>データのバックアップと復元ができます。</p>
           <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={handleBackup} onTouchEnd={(e) => { e.preventDefault(); handleBackup(); }} style={S.backupBtn}>ð¦ ããã¯ã¢ãã</button>
-            <label style={S.restoreBtn}>ð å¾©åãã<input type="file" accept=".json" onChange={handleRestore} style={{ display: "none" }} /></label>
+            <button onClick={handleBackup} onTouchEnd={(e) => { e.preventDefault(); handleBackup(); }} style={S.backupBtn}>📦 バックアップ</button>
+            <label style={S.restoreBtn}>🔄 復元する<input type="file" accept=".json" onChange={handleRestore} style={{ display: "none" }} /></label>
           </div>
         </div>
 
-        <button onClick={onLogout} onTouchEnd={(e) => { e.preventDefault(); onLogout(); }} style={S.logoutBtn}>ã­ã°ã¢ã¦ã</button>
+        <button onClick={onLogout} onTouchEnd={(e) => { e.preventDefault(); onLogout(); }} style={S.logoutBtn}>ログアウト</button>
       </div>
     </div>
   );
