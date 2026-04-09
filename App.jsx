@@ -448,6 +448,25 @@ function DayScreen({ date, setDate, settings, holidays, bookings, setBookings, d
   const hol = holidays[date];
   const isClosed = settings.closedDays.includes(d.getDay()) || (settings.closedDates || []).includes(date);
 
+  // Touch tracking to prevent accidental taps during scroll
+  const touchStart = useRef(null);
+  const handleTouchStart = useCallback((e) => {
+    const t = e.touches[0];
+    touchStart.current = { x: t.clientX, y: t.clientY, time: Date.now() };
+  }, []);
+  const handleSlotTouchEnd = useCallback((e, action) => {
+    e.preventDefault();
+    if (!touchStart.current) return;
+    const t = e.changedTouches[0];
+    const dx = Math.abs(t.clientX - touchStart.current.x);
+    const dy = Math.abs(t.clientY - touchStart.current.y);
+    const dt = Date.now() - touchStart.current.time;
+    if (dx < 10 && dy < 10 && dt < 500) {
+      action();
+    }
+    touchStart.current = null;
+  }, []);
+
   const dayData = dayOff[date] || {};
   const amOff = dayData.amOff || false;
   const pmOff = dayData.pmOff || false;
@@ -538,7 +557,8 @@ function DayScreen({ date, setDate, settings, holidays, bookings, setBookings, d
         return (
           <div key={`${time}-${col.id}`}
             onClick={() => setShowEditModal({ id: occupied.id, ...occupied })}
-            onTouchEnd={(e) => { e.preventDefault(); setShowEditModal({ id: occupied.id, ...occupied }); }}
+            onTouchStart={handleTouchStart}
+            onTouchEnd={(e) => handleSlotTouchEnd(e, () => setShowEditModal({ id: occupied.id, ...occupied }))}
             style={{
               ...S.slot, height: 40 * slotsSpan - 1,
               background: isRaku ? "#dcfce7" : "#dbeafe",
@@ -563,7 +583,8 @@ function DayScreen({ date, setDate, settings, holidays, bookings, setBookings, d
     return (
       <div key={`${time}-${col.id}`}
         onClick={() => setShowAddModal({ time, col })}
-        onTouchEnd={(e) => { e.preventDefault(); setShowAddModal({ time, col }); }}
+        onTouchStart={handleTouchStart}
+        onTouchEnd={(e) => handleSlotTouchEnd(e, () => setShowAddModal({ time, col }))}
         style={{ ...S.slot, cursor: "pointer", WebkitTapHighlightColor: "transparent" }}>
         <span style={{ color: "#d1d5db", fontSize: 14 }}>+</span>
       </div>
