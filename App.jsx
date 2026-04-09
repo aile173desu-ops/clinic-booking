@@ -1017,69 +1017,6 @@ function SettingsScreen({ settings, setSettings, holidays, bookings, setBookings
 
       <div style={S.settingsBody}>
 
-        {/* ==================== FIREBASE CONFIG ==================== */}
-        <div style={{ ...S.card, border: `2px solid ${fbStatusColor}` }}>
-          <h3 style={S.cardTitle}>🔥 Firebase リアルタイム同期</h3>
-          <p style={{ fontSize: 12, color: "#6b7280", marginBottom: 8 }}>
-            Firebase Realtime Databaseに接続すると、全スタッフの端末でデータがリアルタイムに共有されます。
-          </p>
-
-          <div style={{ padding: "8px 12px", borderRadius: 8, background: fbStatus === "connected" ? "#f0fdf4" : fbStatus === "error" ? "#fef2f2" : "#f8fafc", marginBottom: 12, fontSize: 13, fontWeight: 600, color: fbStatusColor }}>
-            {fbStatusText}
-          </div>
-
-          {[
-            { key: "databaseURL", label: "Database URL（必須）", placeholder: "https://xxxxx.firebaseio.com" },
-            { key: "apiKey", label: "API Key", placeholder: "AIzaSy..." },
-            { key: "authDomain", label: "Auth Domain", placeholder: "xxxxx.firebaseapp.com" },
-            { key: "projectId", label: "Project ID", placeholder: "my-clinic-app" },
-          ].map(({ key, label, placeholder }) => (
-            <div key={key} style={S.modalField}>
-              <label style={S.modalLabel}>{label}</label>
-              <input
-                value={tempFbConfig[key] || ""}
-                onChange={(e) => setTempFbConfig((p) => ({ ...p, [key]: e.target.value }))}
-                placeholder={placeholder}
-                style={S.textInput}
-              />
-            </div>
-          ))}
-
-          {fbSaveMsg && <div style={{ fontSize: 13, color: fbSaveMsg.includes("エラー") ? "#ef4444" : "#22c55e", marginBottom: 8, fontWeight: 600 }}>{fbSaveMsg}</div>}
-
-          <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={handleFirebaseSave} onTouchEnd={(e) => { e.preventDefault(); handleFirebaseSave(); }} style={{ ...S.saveBtn, flex: 1 }}>
-              {fbConnected ? "🔄 再接続" : "🔥 接続テスト & 保存"}
-            </button>
-            {fbConnected && (
-              <button onClick={handleFirebaseDisconnect} onTouchEnd={(e) => { e.preventDefault(); handleFirebaseDisconnect(); }} style={{ ...S.deleteBtn, flex: 1 }}>
-                接続解除
-              </button>
-            )}
-          </div>
-
-          <details style={{ marginTop: 12 }}>
-            <summary style={{ fontSize: 12, color: "#6b7280", cursor: "pointer", fontWeight: 600 }}>📖 Firebase設定手順</summary>
-            <div style={{ fontSize: 11, color: "#6b7280", lineHeight: 1.8, marginTop: 8, padding: "8px 12px", background: "#f9fafb", borderRadius: 8 }}>
-              1. <a href="https://console.firebase.google.com/" target="_blank" rel="noopener noreferrer" style={{ color: "#3b82f6" }}>Firebase Console</a> にアクセス<br/>
-              2.「プロジェクトを作成」でプロジェクト作成<br/>
-              3. 左メニュー「構築」→「Realtime Database」→「データベースを作成」<br/>
-              4. ルールを以下に変更して「公開」：<br/>
-              <code style={{ display: "block", padding: "6px 8px", background: "#e5e7eb", borderRadius: 4, margin: "4px 0", fontSize: 10, whiteSpace: "pre" }}>
-{`{
-  "rules": {
-    ".read": true,
-    ".write": true
-  }
-}`}
-              </code>
-              5. 歯車アイコン→「プロジェクトの設定」→「全般」→「マイアプリ」でウェブアプリを追加<br/>
-              6. 表示されるfirebaseConfigの各値をここに入力<br/>
-              7.「接続テスト & 保存」をタップ
-            </div>
-          </details>
-        </div>
-
         {/* Clinic name */}
         <div style={S.card}>
           <h3 style={S.cardTitle}>クリニック名</h3>
@@ -1259,6 +1196,67 @@ function SettingsScreen({ settings, setSettings, holidays, bookings, setBookings
           </div>
           {pinMsg && <div style={{ color: pinMsg.includes("変更") ? "#22c55e" : "#ef4444", fontSize: 13, marginBottom: 8 }}>{pinMsg}</div>}
           <button onClick={changePin} onTouchEnd={(e) => { e.preventDefault(); changePin(); }} style={S.outlineBtn}>PINを変更する</button>
+        </div>
+
+        {/* Firebase Sync - collapsible tab */}
+        <div style={S.card}>
+          <details>
+            <summary style={{ display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", WebkitTapHighlightColor: "transparent", listStyle: "none" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <h3 style={{ ...S.cardTitle, marginBottom: 0 }}>🔥 リアルタイム同期</h3>
+                <span style={{ fontSize: 11, fontWeight: 600, color: fbStatusColor, background: fbStatus === "connected" ? "#f0fdf4" : fbStatus === "error" ? "#fef2f2" : "#f8fafc", padding: "2px 8px", borderRadius: 10, border: `1px solid ${fbStatusColor}` }}>
+                  {fbStatus === "connected" ? "🟢 接続中" : fbStatus === "connecting" ? "🟡 接続中..." : fbStatus === "error" ? "🔴 エラー" : "⚪ 未接続"}
+                </span>
+              </div>
+              <span style={{ fontSize: 18, color: "#9ca3af", transition: "transform 0.2s" }}>▶</span>
+            </summary>
+            <div style={{ marginTop: 12 }}>
+              <p style={{ fontSize: 12, color: "#6b7280", marginBottom: 8 }}>
+                Firebase Realtime Databaseに接続すると、全スタッフの端末でデータがリアルタイムに共有されます。
+              </p>
+
+              <div style={{ padding: "8px 12px", borderRadius: 8, background: fbStatus === "connected" ? "#f0fdf4" : fbStatus === "error" ? "#fef2f2" : "#f8fafc", marginBottom: 12, fontSize: 13, fontWeight: 600, color: fbStatusColor }}>
+                {fbStatusText}
+              </div>
+
+              {[
+                { key: "databaseURL", label: "Database URL（必須）", placeholder: "https://xxxxx.firebaseio.com" },
+                { key: "apiKey", label: "API Key", placeholder: "AIzaSy..." },
+                { key: "authDomain", label: "Auth Domain", placeholder: "xxxxx.firebaseapp.com" },
+                { key: "projectId", label: "Project ID", placeholder: "my-clinic-app" },
+              ].map(({ key, label, placeholder }) => (
+                <div key={key} style={S.modalField}>
+                  <label style={S.modalLabel}>{label}</label>
+                  <input
+                    value={tempFbConfig[key] || ""}
+                    onChange={(e) => setTempFbConfig((p) => ({ ...p, [key]: e.target.value }))}
+                    placeholder={placeholder}
+                    style={S.textInput}
+                  />
+                </div>
+              ))}
+
+              {fbSaveMsg && <div style={{ fontSize: 13, color: fbSaveMsg.includes("エラー") ? "#ef4444" : "#22c55e", marginBottom: 8, fontWeight: 600 }}>{fbSaveMsg}</div>}
+
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={handleFirebaseSave} onTouchEnd={(e) => { e.preventDefault(); handleFirebaseSave(); }} style={{ ...S.saveBtn, flex: 1 }}>
+                  {fbConnected ? "🔄 再接続" : "🔥 接続テスト & 保存"}
+                </button>
+                {fbConnected && (
+                  <button onClick={handleFirebaseDisconnect} onTouchEnd={(e) => { e.preventDefault(); handleFirebaseDisconnect(); }} style={{ ...S.deleteBtn, flex: 1 }}>
+                    接続解除
+                  </button>
+                )}
+              </div>
+
+              <details style={{ marginTop: 12 }}>
+                <summary style={{ fontSize: 12, color: "#6b7280", cursor: "pointer", fontWeight: 600 }}>📖 Firebase設定手順</summary>
+                <div style={{ fontSize: 11, color: "#6b7280", lineHeight: 1.8, marginTop: 8, padding: "8px 12px", background: "#f9fafb", borderRadius: 8 }}>
+                  Firebase Consoleでプロジェクト作成 → Realtime Database作成 → ルール設定 → ウェブアプリ追加 → Config入力
+                </div>
+              </details>
+            </div>
+          </details>
         </div>
 
         {/* Backup */}
