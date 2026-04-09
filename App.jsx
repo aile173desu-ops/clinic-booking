@@ -1,6 +1,74 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 
 // ============================================================
+// Firebase Realtime Database Module (CDN-loaded)
+// ============================================================
+
+let firebaseApp = null;
+let firebaseDb = null;
+let firebaseReady = false;
+
+const FB_SCRIPT_URLS = [
+  "https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js",
+  "https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js",
+];
+
+function loadFirebaseScripts() {
+  return Promise.all(
+    FB_SCRIPT_URLS.map(
+      (url) =>
+        new Promise((resolve, reject) => {
+          if (document.querySelector(`script[src="${url}"]`)) return resolve();
+          const s = document.createElement("script");
+          s.src = url;
+          s.onload = resolve;
+          s.onerror = reject;
+          document.head.appendChild(s);
+        })
+    )
+  );
+}
+
+async function initFirebase(config) {
+  if (!config || !config.databaseURL) return false;
+  try {
+    await loadFirebaseScripts();
+    const firebase = window.firebase;
+    if (!firebase) return false;
+    if (firebaseApp) {
+      try { firebaseApp.delete(); } catch {}
+    }
+    firebaseApp = firebase.initializeApp(config, "clinic-booking-" + Date.now());
+    firebaseDb = firebase.database(firebaseApp);
+    firebaseReady = true;
+    return true;
+  } catch (e) {
+    console.error("Firebase init error:", e);
+    firebaseReady = false;
+    return false;
+  }
+}
+
+function fbRef(path) {
+  if (!firebaseReady || !firebaseDb) return null;
+  return firebaseDb.ref(path);
+}
+
+function fbSet(path, data) {
+  const ref = fbRef(path);
+  if (!ref) return Promise.resolve();
+  return ref.set(data);
+}
+
+function fbOnValue(path, cb) {
+  const ref = fbRef(path);
+  if (!ref) return () => {};
+  const handler = (snap) => cb(snap.val());
+  ref.on("value", handler);
+  return () => ref.off("value", handler);
+}
+
+// ============================================================
 // Utility helpers
 // ============================================================
 const DAYS_JP = ["日", "月", "火", "水", "木", "金", "土"];
@@ -47,7 +115,7 @@ function getJPHolidays(year) {
 }
 
 // ============================================================
-// Storage
+// Storage (localStorage fallback + Firebase sync)
 // ============================================================
 const LS = {
   get(k, def) { try { const v = localStorage.getItem("clinic_" + k); return v ? JSON.parse(v) : def; } catch { return def; } },
@@ -69,6 +137,16 @@ const DEFAULT_SETTINGS = {
   staff: ["井波", "奥村", "中野", "落合", "岸"],
 };
 
+const DEFAULT_FIREBASE_CONFIG = {
+  apiKey: "",
+  authDomain: "",
+  databaseURL: "",
+  projectId: "",
+  storageBucket: "",
+  messagingSenderId: "",
+  appId: "",
+};
+
 function generateSlots(start, end) {
   const slots = [];
   let cur = timeToMin(start);
@@ -80,7 +158,6 @@ function generateSlots(start, end) {
   return slots;
 }
 
-// Build columns: staff names (通常) + 楽トレ①②
 function buildCols(staff) {
   const staffCols = (staff || []).map((name) => ({ id: `staff_${name}`, label: name, type: "通常" }));
   const rakuCols = [
@@ -88,6 +165,44 @@ function buildCols(staff) {
     { id: "raku_2", label: "楽トレ②", type: "楽トレ" },
   ];
   return [...staffCols, ...rakuCols];
+}
+
+// ============================================================
+// Custom Hook: useFirebaseSync
+// ============================================================
+function useFirebaseSync(path, state, setState, isConnected) {
+  const isRemoteUpdate = useRef(false);
+  const lastSynced = useRef(null);
+
+  // Listen for remote changes
+  useEffect(() => {
+    if (!isConnected) return;
+    const unsub = fbOnValue(path, (val) => {
+      if (val !== null && val !== undefined) {
+        const json = JSON.stringify(val);
+        if (json !== lastSynced.current) {
+          isRemoteUpdate.current = true;
+          lastSynced.current = json;
+          setState(val);
+        }
+      }
+    });
+    return unsub;
+  }, [path, isConnected, setState]);
+
+  // Push local changes to Firebase
+  useEffect(() => {
+    if (!isConnected) return;
+    if (isRemoteUpdate.current) {
+      isRemoteUpdate.current = false;
+      return;
+    }
+    const json = JSON.stringify(state);
+    if (json !== lastSynced.current) {
+      lastSynced.current = json;
+      fbSet(path, state).catch((e) => console.error("Firebase write error:", e));
+    }
+  }, [state, path, isConnected]);
 }
 
 // ============================================================
@@ -106,10 +221,53 @@ export default function ClinicBookingApp() {
   const [showEditModal, setShowEditModal] = useState(null);
   const [showBlockModal, setShowBlockModal] = useState(false);
 
+  // Firebase state
+  const [fbConfig, setFbConfig] = useState(() => LS.get("firebaseConfig", DEFAULT_FIREBASE_CONFIG));
+  const [fbConnected, setFbConnected] = useState(false);
+  const [fbStatus, setFbStatus] = useState("disconnected"); // disconnected | connecting | connected | error
+
+  // localStorage persistence
   useEffect(() => { LS.set("settings", settings); }, [settings]);
   useEffect(() => { LS.set("bookings", bookings); }, [bookings]);
   useEffect(() => { LS.set("dayOff", dayOff); }, [dayOff]);
   useEffect(() => { LS.set("shifts", shifts); }, [shifts]);
+  useEffect(() => { LS.set("firebaseConfig", fbConfig); }, [fbConfig]);
+
+  // Firebase sync hooks
+  useFirebaseSync("settings", settings, setSettings, fbConnected);
+  useFirebaseSync("bookings", bookings, setBookings, fbConnected);
+  useFirebaseSync("dayOff", dayOff, setDayOff, fbConnected);
+  useFirebaseSync("shifts", shifts, setShifts, fbConnected);
+
+  // Auto-connect Firebase on mount if config exists
+  useEffect(() => {
+    if (fbConfig.databaseURL) {
+      connectFirebase(fbConfig);
+    }
+  }, []); // eslint-disable-line
+
+  const connectFirebase = async (config) => {
+    setFbStatus("connecting");
+    const ok = await initFirebase(config);
+    if (ok) {
+      setFbConnected(true);
+      setFbStatus("connected");
+    } else {
+      setFbConnected(false);
+      setFbStatus("error");
+    }
+  };
+
+  const disconnectFirebase = () => {
+    if (firebaseApp) {
+      try { firebaseApp.delete(); } catch {}
+    }
+    firebaseApp = null;
+    firebaseDb = null;
+    firebaseReady = false;
+    setFbConnected(false);
+    setFbStatus("disconnected");
+  };
 
   const holidays = useMemo(() => {
     const h = {};
@@ -121,15 +279,24 @@ export default function ClinicBookingApp() {
 
   if (!loggedIn) return <LoginScreen settings={settings} onLogin={() => setLoggedIn(true)} />;
 
-  const commonProps = { settings, holidays, bookings, setBookings, dayOff, setDayOff, shifts, setShifts, cols };
+  const commonProps = { settings, setSettings, holidays, bookings, setBookings, dayOff, setDayOff, shifts, setShifts, cols };
 
   return (
     <div style={S.appContainer}>
+      {/* Firebase connection indicator */}
+      <div style={{
+        position: "fixed", top: 0, left: 0, right: 0, height: 3, zIndex: 999,
+        background: fbStatus === "connected" ? "#22c55e" : fbStatus === "connecting" ? "#fbbf24" : fbStatus === "error" ? "#ef4444" : "#94a3b8",
+        transition: "background 0.3s ease",
+        maxWidth: 560, margin: "0 auto",
+      }} />
+
       {screen === "calendar" && (
         <CalendarScreen {...commonProps}
           calMonth={calMonth} setCalMonth={setCalMonth}
           onSelectDate={(d) => { setSelectedDate(d); setScreen("day"); }}
           onSettings={() => setScreen("settings")}
+          fbStatus={fbStatus}
         />
       )}
       {screen === "day" && (
@@ -145,6 +312,10 @@ export default function ClinicBookingApp() {
         <SettingsScreen {...commonProps}
           onBack={() => setScreen("calendar")}
           onLogout={() => { setLoggedIn(false); setScreen("calendar"); }}
+          fbConfig={fbConfig} setFbConfig={setFbConfig}
+          fbConnected={fbConnected} fbStatus={fbStatus}
+          connectFirebase={connectFirebase}
+          disconnectFirebase={disconnectFirebase}
         />
       )}
     </div>
@@ -158,10 +329,12 @@ function LoginScreen({ settings, onLogin }) {
   const [pin, setPin] = useState("");
   const [error, setError] = useState(false);
   const [shake, setShake] = useState(false);
-  const handleLogin = () => {
+
+  const handleLogin = useCallback(() => {
     if (pin === settings.pin) { onLogin(); }
     else { setError(true); setShake(true); setTimeout(() => setShake(false), 500); setTimeout(() => setError(false), 2000); }
-  };
+  }, [pin, settings.pin, onLogin]);
+
   return (
     <div style={S.loginBg}>
       <div style={S.loginCenter}>
@@ -175,7 +348,7 @@ function LoginScreen({ settings, onLogin }) {
             onKeyDown={(e) => e.key === "Enter" && handleLogin()}
             placeholder="PINを入力" style={S.pinInput} autoFocus />
           {error && <div style={S.errorText}>PINが正しくありません</div>}
-          <button onClick={handleLogin} style={S.loginBtn}>ログイン</button>
+          <button onClick={handleLogin} onTouchEnd={(e) => { e.preventDefault(); handleLogin(); }} style={S.loginBtn}>ログイン</button>
           <div style={S.pinHint}>初期PIN: 1234</div>
         </div>
       </div>
@@ -187,17 +360,19 @@ function LoginScreen({ settings, onLogin }) {
 // ============================================================
 // Calendar
 // ============================================================
-function CalendarScreen({ calMonth, setCalMonth, settings, holidays, bookings, dayOff, onSelectDate, onSettings }) {
+function CalendarScreen({ calMonth, setCalMonth, settings, holidays, bookings, dayOff, onSelectDate, onSettings, fbStatus }) {
   const { year, month } = calMonth;
   const firstDay = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const today = fmtDate(new Date());
+
   const cells = [];
   for (let i = 0; i < firstDay; i++) cells.push(null);
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
 
-  const prevMonth = () => setCalMonth((p) => p.month === 0 ? { year: p.year - 1, month: 11 } : { ...p, month: p.month - 1 });
-  const nextMonth = () => setCalMonth((p) => p.month === 11 ? { year: p.year + 1, month: 0 } : { ...p, month: p.month + 1 });
+  const prevMonth = useCallback(() => setCalMonth((p) => p.month === 0 ? { year: p.year - 1, month: 11 } : { ...p, month: p.month - 1 }), [setCalMonth]);
+  const nextMonth = useCallback(() => setCalMonth((p) => p.month === 11 ? { year: p.year + 1, month: 0 } : { ...p, month: p.month + 1 }), [setCalMonth]);
+
   const getDateKey = (d) => `${year}-${pad(month + 1)}-${pad(d)}`;
   const hasBookings = (d) => { const b = bookings[getDateKey(d)]; return b && Object.keys(b).length > 0; };
   const isHoliday = (d) => holidays[getDateKey(d)];
@@ -207,24 +382,30 @@ function CalendarScreen({ calMonth, setCalMonth, settings, holidays, bookings, d
   };
   const isOff = (d) => { const off = dayOff[getDateKey(d)]; return off && off.fullDay; };
 
+  const statusColor = fbStatus === "connected" ? "#22c55e" : fbStatus === "connecting" ? "#fbbf24" : fbStatus === "error" ? "#ef4444" : "#94a3b8";
+  const statusLabel = fbStatus === "connected" ? "🟢 同期中" : fbStatus === "connecting" ? "🟡 接続中..." : fbStatus === "error" ? "🔴 接続エラー" : "⚪ ローカルのみ";
+
   return (
     <div style={S.screenBg}>
       <div style={S.header}>
-        <div style={{ width: 50 }} />
+        <div style={{ fontSize: 10, color: statusColor, fontWeight: 600, minWidth: 70 }}>{statusLabel}</div>
         <h1 style={S.headerTitle}>{settings.clinicName}</h1>
-        <button onClick={onSettings} style={S.settingsBtn}>設定</button>
+        <button onClick={onSettings} onTouchEnd={(e) => { e.preventDefault(); onSettings(); }} style={S.settingsBtn}>設定</button>
       </div>
+
       <div style={S.monthNav}>
-        <button onClick={prevMonth} style={S.navArrow}>‹</button>
+        <button onClick={prevMonth} onTouchEnd={(e) => { e.preventDefault(); prevMonth(); }} style={S.navArrow}>‹</button>
         <span style={S.monthLabel}>{year}年{month + 1}月</span>
-        <button onClick={nextMonth} style={S.navArrow}>›</button>
+        <button onClick={nextMonth} onTouchEnd={(e) => { e.preventDefault(); nextMonth(); }} style={S.navArrow}>›</button>
       </div>
+
       <div style={S.legend}>
         <span style={S.legendItem}><span style={{ ...S.legendDot, background: "#3b82f6" }} /> 通常治療</span>
         <span style={S.legendItem}><span style={{ ...S.legendDot, background: "#22c55e" }} /> 楽トレ</span>
         <span style={S.legendItem}><span style={{ background: "#ef4444", width: 10, height: 10, borderRadius: 2, display: "inline-block" }} /> 祝日</span>
         <span style={S.legendItem}><span style={{ color: "#9ca3af", fontWeight: 500 }}>—</span> 休診</span>
       </div>
+
       <div style={S.calGrid}>
         {DAYS_JP.map((d, i) => (
           <div key={d} style={{ ...S.calHeader, color: i === 0 ? "#ef4444" : i === 6 ? "#3b82f6" : "#374151" }}>{d}</div>
@@ -235,8 +416,10 @@ function CalendarScreen({ calMonth, setCalMonth, settings, holidays, bookings, d
           const hol = isHoliday(d); const closed = isClosed(d); const off = isOff(d);
           const dow = parseDate(key).getDay(); const hasBk = hasBookings(d);
           return (
-            <div key={d} onClick={() => onSelectDate(key)}
-              style={{ ...S.calCell, cursor: "pointer", background: closed || off ? "#f3f4f6" : hol ? "#fef2f2" : "white", opacity: closed && !hol ? 0.5 : 1 }}>
+            <div key={d}
+              onClick={() => onSelectDate(key)}
+              onTouchEnd={(e) => { e.preventDefault(); onSelectDate(key); }}
+              style={{ ...S.calCell, cursor: "pointer", WebkitTapHighlightColor: "transparent", background: closed || off ? "#f3f4f6" : hol ? "#fef2f2" : "white", opacity: closed && !hol ? 0.5 : 1 }}>
               <div style={{
                 color: isToday ? "white" : hol ? "#ef4444" : dow === 0 ? "#ef4444" : dow === 6 ? "#3b82f6" : "#1f2937",
                 background: isToday ? "#3b82f6" : "transparent",
@@ -270,7 +453,6 @@ function DayScreen({ date, setDate, settings, holidays, bookings, setBookings, d
   const pmOff = dayData.pmOff || false;
   const fullDayOff = dayData.fullDay || false;
   const blocks = dayData.blocks || [];
-
   const dayShift = shifts[date] || {};
   const isStaffOff = (staffName) => dayShift[staffName] === true;
 
@@ -278,20 +460,20 @@ function DayScreen({ date, setDate, settings, holidays, bookings, setBookings, d
   const pmSlots = generateSlots(settings.pmStart, settings.pmEnd);
   const dayBookings = bookings[date] || {};
 
-  const prevDay = () => { const p = new Date(d); p.setDate(p.getDate() - 1); setDate(fmtDate(p)); };
-  const nextDay = () => { const n = new Date(d); n.setDate(n.getDate() + 1); setDate(fmtDate(n)); };
-  const goToday = () => setDate(fmtDate(new Date()));
+  const prevDay = useCallback(() => { const p = new Date(d); p.setDate(p.getDate() - 1); setDate(fmtDate(p)); }, [d, setDate]);
+  const nextDay = useCallback(() => { const n = new Date(d); n.setDate(n.getDate() + 1); setDate(fmtDate(n)); }, [d, setDate]);
+  const goToday = useCallback(() => setDate(fmtDate(new Date())), [setDate]);
 
-  const toggleDayOff = () => setDayOff((prev) => ({ ...prev, [date]: { ...dayData, fullDay: !fullDayOff } }));
-  const toggleAmOff = () => setDayOff((prev) => ({ ...prev, [date]: { ...dayData, amOff: !amOff } }));
-  const togglePmOff = () => setDayOff((prev) => ({ ...prev, [date]: { ...dayData, pmOff: !pmOff } }));
+  const toggleDayOff = useCallback(() => setDayOff((prev) => ({ ...prev, [date]: { ...dayData, fullDay: !fullDayOff } })), [date, dayData, fullDayOff, setDayOff]);
+  const toggleAmOff = useCallback(() => setDayOff((prev) => ({ ...prev, [date]: { ...dayData, amOff: !amOff } })), [date, dayData, amOff, setDayOff]);
+  const togglePmOff = useCallback(() => setDayOff((prev) => ({ ...prev, [date]: { ...dayData, pmOff: !pmOff } })), [date, dayData, pmOff, setDayOff]);
 
-  const toggleStaffShift = (staffName) => {
+  const toggleStaffShift = useCallback((staffName) => {
     setShifts((prev) => {
       const ds = prev[date] || {};
       return { ...prev, [date]: { ...ds, [staffName]: !ds[staffName] } };
     });
-  };
+  }, [date, setShifts]);
 
   const isSlotOccupied = (time, colId) => {
     for (const [id, b] of Object.entries(dayBookings)) {
@@ -312,23 +494,26 @@ function DayScreen({ date, setDate, settings, holidays, bookings, setBookings, d
     });
   };
 
-  const addBooking = (booking) => {
+  const addBooking = useCallback((booking) => {
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     setBookings((prev) => ({ ...prev, [date]: { ...(prev[date] || {}), [id]: booking } }));
     setShowAddModal(null);
-  };
-  const updateBooking = (id, booking) => {
+  }, [date, setBookings, setShowAddModal]);
+
+  const updateBooking = useCallback((id, booking) => {
     setBookings((prev) => ({ ...prev, [date]: { ...(prev[date] || {}), [id]: booking } }));
     setShowEditModal(null);
-  };
-  const deleteBooking = (id) => {
+  }, [date, setBookings, setShowEditModal]);
+
+  const deleteBooking = useCallback((id) => {
     setBookings((prev) => { const day = { ...(prev[date] || {}) }; delete day[id]; return { ...prev, [date]: day }; });
     setShowEditModal(null);
-  };
-  const addBlock = (block) => {
+  }, [date, setBookings, setShowEditModal]);
+
+  const addBlock = useCallback((block) => {
     setDayOff((prev) => ({ ...prev, [date]: { ...dayData, blocks: [...blocks, block] } }));
     setShowBlockModal(false);
-  };
+  }, [date, dayData, blocks, setDayOff, setShowBlockModal]);
 
   const colCount = cols.length;
   const gridCols = `44px repeat(${colCount}, 1fr)`;
@@ -340,6 +525,7 @@ function DayScreen({ date, setDate, settings, holidays, bookings, setBookings, d
     if ((isAmSection && amOff) || (!isAmSection && pmOff) || fullDayOff || isClosed || staffIsOff) {
       return <div key={`${time}-${col.id}`} style={{ ...S.slot, background: staffIsOff && !fullDayOff && !isClosed ? "#fee2e2" : "#f3f4f6" }} />;
     }
+
     if (isBlocked(time, col.id)) {
       return <div key={`${time}-${col.id}`} style={{ ...S.slot, background: "#fde68a" }} />;
     }
@@ -352,12 +538,14 @@ function DayScreen({ date, setDate, settings, holidays, bookings, setBookings, d
         return (
           <div key={`${time}-${col.id}`}
             onClick={() => setShowEditModal({ id: occupied.id, ...occupied })}
+            onTouchEnd={(e) => { e.preventDefault(); setShowEditModal({ id: occupied.id, ...occupied }); }}
             style={{
               ...S.slot, height: 40 * slotsSpan - 1,
               background: isRaku ? "#dcfce7" : "#dbeafe",
               borderLeft: `3px solid ${isRaku ? "#22c55e" : "#3b82f6"}`,
               cursor: "pointer", overflow: "hidden", padding: "2px 4px",
               display: "flex", flexDirection: "column", justifyContent: "center",
+              WebkitTapHighlightColor: "transparent",
             }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: "#1f2937", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
               {occupied.isNew && <span style={{ fontSize: 8, background: "#fbbf24", color: "#78350f", borderRadius: 3, padding: "1px 3px", marginRight: 2, fontWeight: 700 }}>新規</span>}
@@ -373,35 +561,39 @@ function DayScreen({ date, setDate, settings, holidays, bookings, setBookings, d
     }
 
     return (
-      <div key={`${time}-${col.id}`} onClick={() => setShowAddModal({ time, col })} style={{ ...S.slot, cursor: "pointer" }}>
+      <div key={`${time}-${col.id}`}
+        onClick={() => setShowAddModal({ time, col })}
+        onTouchEnd={(e) => { e.preventDefault(); setShowAddModal({ time, col }); }}
+        style={{ ...S.slot, cursor: "pointer", WebkitTapHighlightColor: "transparent" }}>
         <span style={{ color: "#d1d5db", fontSize: 14 }}>+</span>
       </div>
     );
   };
 
+  // Helper for touch-friendly buttons
+  const TB = (onClick, style, children, extra = {}) => (
+    <button onClick={onClick} onTouchEnd={(e) => { e.preventDefault(); onClick(); }} style={style} {...extra}>{children}</button>
+  );
+
   return (
     <div style={S.screenBg}>
       <div style={S.header}>
-        <button onClick={onBack} style={S.backBtn}>← カレンダー</button>
+        {TB(onBack, S.backBtn, "← カレンダー")}
         <span style={S.headerTitle2}>{dateLabel}</span>
-        <button onClick={goToday} style={S.todayBtn}>今日</button>
+        {TB(goToday, S.todayBtn, "今日")}
       </div>
 
       <div style={S.dayNav}>
-        <button onClick={prevDay} style={S.dayNavBtn}>‹ 前日</button>
+        {TB(prevDay, S.dayNavBtn, "‹ 前日")}
         <span style={S.dayNavLabel}>{fullLabel}</span>
-        <button onClick={nextDay} style={S.dayNavBtn}>翌日 ›</button>
+        {TB(nextDay, S.dayNavBtn, "翌日 ›")}
       </div>
 
       <div style={S.dayStatus}>
         {hol ? <span style={{ color: "#ef4444", fontWeight: 600 }}>🎌 {hol}</span>
           : fullDayOff || isClosed ? <span style={{ color: "#9ca3af", fontWeight: 600 }}>休診日</span>
           : <span style={{ color: "#22c55e", fontWeight: 600 }}>✅ 診療日</span>}
-        {!isClosed && (
-          <button onClick={toggleDayOff} style={fullDayOff ? S.dayBtnActive : S.dayBtn}>
-            {fullDayOff ? "診療日にする" : "この日を休診にする"}
-          </button>
-        )}
+        {!isClosed && TB(toggleDayOff, fullDayOff ? S.dayBtnActive : S.dayBtn, fullDayOff ? "診療日にする" : "この日を休診にする")}
       </div>
 
       {/* Staff shift toggles */}
@@ -412,7 +604,9 @@ function DayScreen({ date, setDate, settings, holidays, bookings, setBookings, d
             {settings.staff.map((name) => {
               const off = isStaffOff(name);
               return (
-                <button key={name} onClick={() => toggleStaffShift(name)}
+                <button key={name}
+                  onClick={() => toggleStaffShift(name)}
+                  onTouchEnd={(e) => { e.preventDefault(); toggleStaffShift(name); }}
                   style={off ? S.shiftBtnOff : S.shiftBtnOn}>
                   <span style={{ fontSize: 14 }}>{off ? "🚫" : "✅"}</span>
                   <span style={{ fontSize: 12, fontWeight: 600 }}>{name}</span>
@@ -425,9 +619,7 @@ function DayScreen({ date, setDate, settings, holidays, bookings, setBookings, d
       )}
 
       <div style={{ padding: "4px 8px" }}>
-        <button onClick={() => setShowBlockModal(true)} style={S.actionBtn}>
-          🕐 時間をブロック
-        </button>
+        {TB(() => setShowBlockModal(true), S.actionBtn, "🕐 時間をブロック")}
       </div>
 
       {/* Time grid */}
@@ -453,10 +645,9 @@ function DayScreen({ date, setDate, settings, holidays, bookings, setBookings, d
 
         <div style={S.sectionHeader}>
           <span>🌅 午前 〜{settings.amEnd}</span>
-          <button onClick={toggleAmOff} style={amOff ? S.sectionBtnActive : S.sectionBtn}>
-            {amOff ? "午前再開" : "午前休み"}
-          </button>
+          {TB(toggleAmOff, amOff ? S.sectionBtnActive : S.sectionBtn, amOff ? "午前再開" : "午前休み")}
         </div>
+
         <div style={S.gridBody}>
           {amSlots.map((time) => (
             <div key={time} style={{ ...S.gridRow, gridTemplateColumns: gridCols }}>
@@ -468,10 +659,9 @@ function DayScreen({ date, setDate, settings, holidays, bookings, setBookings, d
 
         <div style={S.sectionHeader}>
           <span>🌙 午後</span>
-          <button onClick={togglePmOff} style={pmOff ? S.sectionBtnActive : S.sectionBtn}>
-            {pmOff ? "午後再開" : "午後休み"}
-          </button>
+          {TB(togglePmOff, pmOff ? S.sectionBtnActive : S.sectionBtn, pmOff ? "午後再開" : "午後休み")}
         </div>
+
         <div style={S.gridBody}>
           {pmSlots.map((time) => (
             <div key={time} style={{ ...S.gridRow, gridTemplateColumns: gridCols }}>
@@ -502,70 +692,83 @@ function AddBookingModal({ date, time, col, cols, settings, onSave, onClose }) {
   const [memo, setMemo] = useState("");
   const [staff, setStaff] = useState(col.type === "通常" ? col.label : "");
 
-  const handleSave = () => {
+  const handleSave = useCallback(() => {
     if (!patient.trim()) return;
     const sc = cols.find((c) => c.id === selectedCol) || col;
     onSave({ time, colId: selectedCol, colLabel: sc.label, colType: sc.type, duration, patient: patient.trim(), memo, staff, isNew: isNewPatient });
-  };
+  }, [patient, cols, selectedCol, col, onSave, time, duration, memo, staff, isNewPatient]);
 
   return (
     <ModalOverlay onClose={onClose}>
       <div style={S.modal}>
         <div style={S.modalHandle} />
         <h2 style={S.modalTitle}>予約を追加</h2>
+
         <div style={S.modalField}>
           <label style={S.modalLabel}>日時</label>
           <div style={{ color: "#3b82f6", fontWeight: 600 }}>{dateLabel}</div>
         </div>
+
         <div style={S.modalField}>
           <label style={S.modalLabel}>列</label>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {cols.map((c) => (
-              <button key={c.id} onClick={() => { setSelectedCol(c.id); if (c.type === "通常") setStaff(c.label); }}
+              <button key={c.id}
+                onClick={() => { setSelectedCol(c.id); if (c.type === "通常") setStaff(c.label); }}
+                onTouchEnd={(e) => { e.preventDefault(); setSelectedCol(c.id); if (c.type === "通常") setStaff(c.label); }}
                 style={{ ...(selectedCol === c.id ? S.chipActive : S.chip), background: selectedCol === c.id ? (c.type === "楽トレ" ? "#dcfce7" : "#dbeafe") : "white", borderColor: selectedCol === c.id ? (c.type === "楽トレ" ? "#22c55e" : "#3b82f6") : "#e5e7eb", color: selectedCol === c.id ? (c.type === "楽トレ" ? "#059669" : "#2563eb") : "#374151" }}>
                 {c.label}
               </button>
             ))}
           </div>
         </div>
+
         <div style={S.modalField}>
           <label style={S.modalLabel}>時間</label>
           <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 6 }}>通常</div>
           <div style={S.btnGroup}>
             {[15, 30, 45, 60].map((m) => (
-              <button key={m} onClick={() => { setDuration(m); setIsNewPatient(false); }}
+              <button key={m}
+                onClick={() => { setDuration(m); setIsNewPatient(false); }}
+                onTouchEnd={(e) => { e.preventDefault(); setDuration(m); setIsNewPatient(false); }}
                 style={duration === m && !isNewPatient ? S.btnGroupActive : S.btnGroupItem}>{m}分</button>
             ))}
           </div>
           <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 6, marginTop: 10 }}>新規</div>
           <div style={S.btnGroup}>
-            <button onClick={() => { setDuration(60); setIsNewPatient(true); }}
+            <button
+              onClick={() => { setDuration(60); setIsNewPatient(true); }}
+              onTouchEnd={(e) => { e.preventDefault(); setDuration(60); setIsNewPatient(true); }}
               style={isNewPatient ? S.btnGroupActive : S.btnGroupItem}>
               60分<div style={{ fontSize: 10, color: isNewPatient ? "#3b82f6" : "#6b7280" }}>新規</div>
             </button>
           </div>
         </div>
+
         <div style={S.modalField}>
           <label style={S.modalLabel}>患者名</label>
           <input value={patient} onChange={(e) => setPatient(e.target.value)} placeholder="例：田中 太郎" style={S.textInput} autoFocus />
         </div>
+
         {settings.staff && settings.staff.length > 0 && (
           <div style={S.modalField}>
             <label style={S.modalLabel}>担当スタッフ（任意）</label>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              <button onClick={() => setStaff("")} style={staff === "" ? S.chipActive : S.chip}>指定なし</button>
+              <button onClick={() => setStaff("")} onTouchEnd={(e) => { e.preventDefault(); setStaff(""); }} style={staff === "" ? S.chipActive : S.chip}>指定なし</button>
               {settings.staff.map((s) => (
-                <button key={s} onClick={() => setStaff(s)} style={staff === s ? S.chipActive : S.chip}>{s}</button>
+                <button key={s} onClick={() => setStaff(s)} onTouchEnd={(e) => { e.preventDefault(); setStaff(s); }} style={staff === s ? S.chipActive : S.chip}>{s}</button>
               ))}
             </div>
           </div>
         )}
+
         <div style={S.modalField}>
           <label style={S.modalLabel}>メモ（任意）</label>
           <textarea value={memo} onChange={(e) => setMemo(e.target.value)} placeholder="備考など" style={S.textArea} rows={2} />
         </div>
-        <button onClick={handleSave} style={S.saveBtn}>✅ 予約を保存</button>
-        <button onClick={onClose} style={S.cancelBtn}>キャンセル</button>
+
+        <button onClick={handleSave} onTouchEnd={(e) => { e.preventDefault(); handleSave(); }} style={S.saveBtn}>✅ 予約を保存</button>
+        <button onClick={onClose} onTouchEnd={(e) => { e.preventDefault(); onClose(); }} style={S.cancelBtn}>キャンセル</button>
       </div>
     </ModalOverlay>
   );
@@ -582,59 +785,78 @@ function EditBookingModal({ booking, cols, settings, onSave, onDelete, onClose }
   const [staff, setStaff] = useState(booking.staff || "");
   const [isNewPatient, setIsNewPatient] = useState(booking.isNew || false);
 
+  const handleSave = useCallback(() => {
+    const sc = cols.find((c) => c.id === selectedCol);
+    onSave({ ...booking, colId: selectedCol, colLabel: sc?.label, colType: sc?.type, patient, duration, memo, staff, isNew: isNewPatient });
+  }, [cols, selectedCol, booking, onSave, patient, duration, memo, staff, isNewPatient]);
+
   return (
     <ModalOverlay onClose={onClose}>
       <div style={S.modal}>
         <div style={S.modalHandle} />
         <h2 style={S.modalTitle}>予約を編集</h2>
+
         <div style={S.modalField}>
           <label style={S.modalLabel}>列</label>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {cols.map((c) => (
-              <button key={c.id} onClick={() => setSelectedCol(c.id)}
+              <button key={c.id}
+                onClick={() => setSelectedCol(c.id)}
+                onTouchEnd={(e) => { e.preventDefault(); setSelectedCol(c.id); }}
                 style={{ ...(selectedCol === c.id ? S.chipActive : S.chip), background: selectedCol === c.id ? (c.type === "楽トレ" ? "#dcfce7" : "#dbeafe") : "white", borderColor: selectedCol === c.id ? (c.type === "楽トレ" ? "#22c55e" : "#3b82f6") : "#e5e7eb", color: selectedCol === c.id ? (c.type === "楽トレ" ? "#059669" : "#2563eb") : "#374151" }}>
                 {c.label}
               </button>
             ))}
           </div>
         </div>
+
         <div style={S.modalField}>
           <label style={S.modalLabel}>時間</label>
           <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 6 }}>通常</div>
           <div style={S.btnGroup}>
             {[15, 30, 45, 60].map((m) => (
-              <button key={m} onClick={() => { setDuration(m); setIsNewPatient(false); }} style={duration === m && !isNewPatient ? S.btnGroupActive : S.btnGroupItem}>{m}分</button>
+              <button key={m}
+                onClick={() => { setDuration(m); setIsNewPatient(false); }}
+                onTouchEnd={(e) => { e.preventDefault(); setDuration(m); setIsNewPatient(false); }}
+                style={duration === m && !isNewPatient ? S.btnGroupActive : S.btnGroupItem}>{m}分</button>
             ))}
           </div>
           <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 6, marginTop: 10 }}>新規</div>
           <div style={S.btnGroup}>
-            <button onClick={() => { setDuration(60); setIsNewPatient(true); }} style={isNewPatient ? S.btnGroupActive : S.btnGroupItem}>
+            <button
+              onClick={() => { setDuration(60); setIsNewPatient(true); }}
+              onTouchEnd={(e) => { e.preventDefault(); setDuration(60); setIsNewPatient(true); }}
+              style={isNewPatient ? S.btnGroupActive : S.btnGroupItem}>
               60分<div style={{ fontSize: 10, color: isNewPatient ? "#3b82f6" : "#6b7280" }}>新規</div>
             </button>
           </div>
         </div>
+
         <div style={S.modalField}>
           <label style={S.modalLabel}>患者名</label>
           <input value={patient} onChange={(e) => setPatient(e.target.value)} style={S.textInput} />
         </div>
+
         {settings.staff && settings.staff.length > 0 && (
           <div style={S.modalField}>
             <label style={S.modalLabel}>担当スタッフ</label>
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              <button onClick={() => setStaff("")} style={staff === "" ? S.chipActive : S.chip}>指定なし</button>
+              <button onClick={() => setStaff("")} onTouchEnd={(e) => { e.preventDefault(); setStaff(""); }} style={staff === "" ? S.chipActive : S.chip}>指定なし</button>
               {settings.staff.map((s) => (
-                <button key={s} onClick={() => setStaff(s)} style={staff === s ? S.chipActive : S.chip}>{s}</button>
+                <button key={s} onClick={() => setStaff(s)} onTouchEnd={(e) => { e.preventDefault(); setStaff(s); }} style={staff === s ? S.chipActive : S.chip}>{s}</button>
               ))}
             </div>
           </div>
         )}
+
         <div style={S.modalField}>
           <label style={S.modalLabel}>メモ</label>
           <textarea value={memo} onChange={(e) => setMemo(e.target.value)} style={S.textArea} rows={2} />
         </div>
-        <button onClick={() => { const sc = cols.find((c) => c.id === selectedCol); onSave({ ...booking, colId: selectedCol, colLabel: sc?.label, colType: sc?.type, patient, duration, memo, staff, isNew: isNewPatient }); }} style={S.saveBtn}>✅ 更新</button>
-        <button onClick={onDelete} style={S.deleteBtn}>🗑️ 削除</button>
-        <button onClick={onClose} style={S.cancelBtn}>キャンセル</button>
+
+        <button onClick={handleSave} onTouchEnd={(e) => { e.preventDefault(); handleSave(); }} style={S.saveBtn}>✅ 更新</button>
+        <button onClick={onDelete} onTouchEnd={(e) => { e.preventDefault(); onDelete(); }} style={S.deleteBtn}>🗑️ 削除</button>
+        <button onClick={onClose} onTouchEnd={(e) => { e.preventDefault(); onClose(); }} style={S.cancelBtn}>キャンセル</button>
       </div>
     </ModalOverlay>
   );
@@ -648,6 +870,7 @@ function BlockModal({ cols, onSave, onClose, settings }) {
   const [end, setEnd] = useState(settings.amEnd);
   const [selCols, setSelCols] = useState(cols.map((c) => c.id));
   const toggleCol = (id) => setSelCols((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+
   return (
     <ModalOverlay onClose={onClose}>
       <div style={S.modal}>
@@ -665,12 +888,18 @@ function BlockModal({ cols, onSave, onClose, settings }) {
           <label style={S.modalLabel}>対象列</label>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {cols.map((c) => (
-              <button key={c.id} onClick={() => toggleCol(c.id)} style={selCols.includes(c.id) ? S.chipActive : S.chip}>{c.label}</button>
+              <button key={c.id}
+                onClick={() => toggleCol(c.id)}
+                onTouchEnd={(e) => { e.preventDefault(); toggleCol(c.id); }}
+                style={selCols.includes(c.id) ? S.chipActive : S.chip}>{c.label}</button>
             ))}
           </div>
         </div>
-        <button onClick={() => onSave({ start, end, colIds: selCols })} style={S.saveBtn}>ブロック設定</button>
-        <button onClick={onClose} style={S.cancelBtn}>キャンセル</button>
+        <button
+          onClick={() => onSave({ start, end, colIds: selCols })}
+          onTouchEnd={(e) => { e.preventDefault(); onSave({ start, end, colIds: selCols }); }}
+          style={S.saveBtn}>ブロック設定</button>
+        <button onClick={onClose} onTouchEnd={(e) => { e.preventDefault(); onClose(); }} style={S.cancelBtn}>キャンセル</button>
       </div>
     </ModalOverlay>
   );
@@ -679,15 +908,15 @@ function BlockModal({ cols, onSave, onClose, settings }) {
 function ModalOverlay({ children, onClose }) {
   return (
     <div style={S.overlay} onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()}>{children}</div>
+      <div onClick={(e) => e.stopPropagation()} onTouchEnd={(e) => e.stopPropagation()}>{children}</div>
     </div>
   );
 }
 
 // ============================================================
-// Settings Screen
+// Settings Screen (with Firebase config)
 // ============================================================
-function SettingsScreen({ settings, setSettings, holidays, bookings, setBookings, shifts, setShifts, onBack, onLogout }) {
+function SettingsScreen({ settings, setSettings, holidays, bookings, setBookings, shifts, setShifts, onBack, onLogout, fbConfig, setFbConfig, fbConnected, fbStatus, connectFirebase, disconnectFirebase }) {
   const [tempClinicName, setTempClinicName] = useState(settings.clinicName);
   const [tempAmStart, setTempAmStart] = useState(settings.amStart);
   const [tempAmEnd, setTempAmEnd] = useState(settings.amEnd);
@@ -704,6 +933,10 @@ function SettingsScreen({ settings, setSettings, holidays, bookings, setBookings
   const [newStaffName, setNewStaffName] = useState("");
   const [shiftMonth, setShiftMonth] = useState(() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() }; });
 
+  // Firebase config editing
+  const [tempFbConfig, setTempFbConfig] = useState(fbConfig);
+  const [fbSaveMsg, setFbSaveMsg] = useState("");
+
   const showSaved = (key) => { setSaved((p) => ({ ...p, [key]: true })); setTimeout(() => setSaved((p) => ({ ...p, [key]: false })), 1500); };
   const saveClinicName = () => { setSettings((s) => ({ ...s, clinicName: tempClinicName })); showSaved("name"); };
   const saveHours = () => { setSettings((s) => ({ ...s, amStart: tempAmStart, amEnd: tempAmEnd, pmStart: tempPmStart, pmEnd: tempPmEnd })); showSaved("hours"); };
@@ -711,25 +944,50 @@ function SettingsScreen({ settings, setSettings, holidays, bookings, setBookings
   const toggleClosedDay = (d) => setClosedDays((prev) => prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d]);
   const addClosedDate = () => { if (!closedDates.includes(newClosedDate)) { const u = [...closedDates, newClosedDate].sort(); setClosedDates(u); setSettings((s) => ({ ...s, closedDates: u })); } };
   const removeClosedDate = (d) => { const u = closedDates.filter((x) => x !== d); setClosedDates(u); setSettings((s) => ({ ...s, closedDates: u })); };
+
   const changePin = () => {
     if (currentPin !== settings.pin) { setPinMsg("現在のPINが正しくありません"); return; }
     if (newPin.length < 4 || newPin.length > 8) { setPinMsg("PINは4〜8桁で入力してください"); return; }
     setSettings((s) => ({ ...s, pin: newPin })); setPinMsg("PINを変更しました！"); setCurrentPin(""); setNewPin("");
   };
+
   const addStaff = () => { const name = newStaffName.trim(); if (!name || staffList.includes(name)) return; const u = [...staffList, name]; setStaffList(u); setSettings((s) => ({ ...s, staff: u })); setNewStaffName(""); };
   const removeStaff = (name) => { const u = staffList.filter((s) => s !== name); setStaffList(u); setSettings((s) => ({ ...s, staff: u })); };
   const moveStaff = (index, dir) => { const u = [...staffList]; const ni = index + dir; if (ni < 0 || ni >= u.length) return; [u[index], u[ni]] = [u[ni], u[index]]; setStaffList(u); setSettings((s) => ({ ...s, staff: u })); };
 
   const handleBackup = () => {
-    const data = { settings, bookings, shifts, version: "4.0" };
+    const data = { settings, bookings, shifts, version: "5.0-firebase" };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = `clinic-backup-${fmtDate(new Date())}.json`; a.click();
   };
+
   const handleRestore = (e) => {
     const file = e.target.files[0]; if (!file) return;
     const reader = new FileReader();
     reader.onload = (ev) => { try { const data = JSON.parse(ev.target.result); if (data.settings) setSettings(data.settings); if (data.bookings) setBookings(data.bookings); if (data.shifts) setShifts(data.shifts); alert("復元しました！"); } catch { alert("ファイルが正しくありません"); } };
     reader.readAsText(file);
+  };
+
+  const handleFirebaseSave = async () => {
+    setFbConfig(tempFbConfig);
+    if (tempFbConfig.databaseURL) {
+      setFbSaveMsg("接続テスト中...");
+      await connectFirebase(tempFbConfig);
+      setFbSaveMsg("接続設定を保存しました");
+    } else {
+      disconnectFirebase();
+      setFbSaveMsg("Firebase接続を解除しました");
+    }
+    setTimeout(() => setFbSaveMsg(""), 3000);
+  };
+
+  const handleFirebaseDisconnect = () => {
+    const empty = { ...DEFAULT_FIREBASE_CONFIG };
+    setTempFbConfig(empty);
+    setFbConfig(empty);
+    disconnectFirebase();
+    setFbSaveMsg("Firebase接続を解除しました");
+    setTimeout(() => setFbSaveMsg(""), 3000);
   };
 
   const allHolidays = useMemo(() => [2025, 2026, 2027].flatMap((y) => getJPHolidays(y)), []);
@@ -746,19 +1004,87 @@ function SettingsScreen({ settings, setSettings, holidays, bookings, setBookings
     });
   };
 
+  const fbStatusColor = fbStatus === "connected" ? "#22c55e" : fbStatus === "connecting" ? "#fbbf24" : fbStatus === "error" ? "#ef4444" : "#94a3b8";
+  const fbStatusText = fbStatus === "connected" ? "🟢 接続中（リアルタイム同期有効）" : fbStatus === "connecting" ? "🟡 接続テスト中..." : fbStatus === "error" ? "🔴 接続エラー（設定を確認してください）" : "⚪ 未接続（ローカル保存のみ）";
+
   return (
     <div style={S.screenBg}>
       <div style={S.header}>
-        <button onClick={onBack} style={S.backBtn}>← 戻る</button>
-        <span style={S.headerTitle2}>設定 <span style={{ fontSize: 12, color: "#93c5fd" }}>v4.0</span></span>
+        <button onClick={onBack} onTouchEnd={(e) => { e.preventDefault(); onBack(); }} style={S.backBtn}>← 戻る</button>
+        <span style={S.headerTitle2}>設定 <span style={{ fontSize: 12, color: "#93c5fd" }}>v5.0</span></span>
         <div style={{ width: 60 }} />
       </div>
+
       <div style={S.settingsBody}>
+
+        {/* ==================== FIREBASE CONFIG ==================== */}
+        <div style={{ ...S.card, border: `2px solid ${fbStatusColor}` }}>
+          <h3 style={S.cardTitle}>🔥 Firebase リアルタイム同期</h3>
+          <p style={{ fontSize: 12, color: "#6b7280", marginBottom: 8 }}>
+            Firebase Realtime Databaseに接続すると、全スタッフの端末でデータがリアルタイムに共有されます。
+          </p>
+
+          <div style={{ padding: "8px 12px", borderRadius: 8, background: fbStatus === "connected" ? "#f0fdf4" : fbStatus === "error" ? "#fef2f2" : "#f8fafc", marginBottom: 12, fontSize: 13, fontWeight: 600, color: fbStatusColor }}>
+            {fbStatusText}
+          </div>
+
+          {[
+            { key: "databaseURL", label: "Database URL（必須）", placeholder: "https://xxxxx.firebaseio.com" },
+            { key: "apiKey", label: "API Key", placeholder: "AIzaSy..." },
+            { key: "authDomain", label: "Auth Domain", placeholder: "xxxxx.firebaseapp.com" },
+            { key: "projectId", label: "Project ID", placeholder: "my-clinic-app" },
+          ].map(({ key, label, placeholder }) => (
+            <div key={key} style={S.modalField}>
+              <label style={S.modalLabel}>{label}</label>
+              <input
+                value={tempFbConfig[key] || ""}
+                onChange={(e) => setTempFbConfig((p) => ({ ...p, [key]: e.target.value }))}
+                placeholder={placeholder}
+                style={S.textInput}
+              />
+            </div>
+          ))}
+
+          {fbSaveMsg && <div style={{ fontSize: 13, color: fbSaveMsg.includes("エラー") ? "#ef4444" : "#22c55e", marginBottom: 8, fontWeight: 600 }}>{fbSaveMsg}</div>}
+
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={handleFirebaseSave} onTouchEnd={(e) => { e.preventDefault(); handleFirebaseSave(); }} style={{ ...S.saveBtn, flex: 1 }}>
+              {fbConnected ? "🔄 再接続" : "🔥 接続テスト & 保存"}
+            </button>
+            {fbConnected && (
+              <button onClick={handleFirebaseDisconnect} onTouchEnd={(e) => { e.preventDefault(); handleFirebaseDisconnect(); }} style={{ ...S.deleteBtn, flex: 1 }}>
+                接続解除
+              </button>
+            )}
+          </div>
+
+          <details style={{ marginTop: 12 }}>
+            <summary style={{ fontSize: 12, color: "#6b7280", cursor: "pointer", fontWeight: 600 }}>📖 Firebase設定手順</summary>
+            <div style={{ fontSize: 11, color: "#6b7280", lineHeight: 1.8, marginTop: 8, padding: "8px 12px", background: "#f9fafb", borderRadius: 8 }}>
+              1. <a href="https://console.firebase.google.com/" target="_blank" rel="noopener noreferrer" style={{ color: "#3b82f6" }}>Firebase Console</a> にアクセス<br/>
+              2.「プロジェクトを作成」でプロジェクト作成<br/>
+              3. 左メニュー「構築」→「Realtime Database」→「データベースを作成」<br/>
+              4. ルールを以下に変更して「公開」：<br/>
+              <code style={{ display: "block", padding: "6px 8px", background: "#e5e7eb", borderRadius: 4, margin: "4px 0", fontSize: 10, whiteSpace: "pre" }}>
+{`{
+  "rules": {
+    ".read": true,
+    ".write": true
+  }
+}`}
+              </code>
+              5. 歯車アイコン→「プロジェクトの設定」→「全般」→「マイアプリ」でウェブアプリを追加<br/>
+              6. 表示されるfirebaseConfigの各値をここに入力<br/>
+              7.「接続テスト & 保存」をタップ
+            </div>
+          </details>
+        </div>
+
         {/* Clinic name */}
         <div style={S.card}>
           <h3 style={S.cardTitle}>クリニック名</h3>
           <input value={tempClinicName} onChange={(e) => setTempClinicName(e.target.value)} style={S.textInput} />
-          <button onClick={saveClinicName} style={S.smallSaveBtn}>{saved.name ? "✅ 保存しました" : "保存"}</button>
+          <button onClick={saveClinicName} onTouchEnd={(e) => { e.preventDefault(); saveClinicName(); }} style={S.smallSaveBtn}>{saved.name ? "✅ 保存しました" : "保存"}</button>
         </div>
 
         {/* Hours */}
@@ -779,7 +1105,7 @@ function SettingsScreen({ settings, setSettings, holidays, bookings, setBookings
             <span>〜 終了</span><input type="time" value={tempPmEnd} onChange={(e) => setTempPmEnd(e.target.value)} style={S.timeInput} />
           </div>
           <div style={{ fontSize: 12, color: "#9ca3af", marginTop: 8 }}>※ 終了は最後の枠の開始時刻（15分単位）</div>
-          <button onClick={saveHours} style={S.smallSaveBtn}>{saved.hours ? "✅ 保存しました" : "保存"}</button>
+          <button onClick={saveHours} onTouchEnd={(e) => { e.preventDefault(); saveHours(); }} style={S.smallSaveBtn}>{saved.hours ? "✅ 保存しました" : "保存"}</button>
         </div>
 
         {/* Staff management */}
@@ -788,7 +1114,7 @@ function SettingsScreen({ settings, setSettings, holidays, bookings, setBookings
           <p style={{ fontSize: 12, color: "#6b7280", marginBottom: 8 }}>登録したスタッフ名が予約表の通常治療列になります。</p>
           <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12 }}>
             <input value={newStaffName} onChange={(e) => setNewStaffName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addStaff()} placeholder="スタッフ名を入力" style={{ ...S.textInput, flex: 1 }} />
-            <button onClick={addStaff} style={S.addBtn}>追加</button>
+            <button onClick={addStaff} onTouchEnd={(e) => { e.preventDefault(); addStaff(); }} style={S.addBtn}>追加</button>
           </div>
           {staffList.length === 0 ? <div style={{ color: "#9ca3af", textAlign: "center", padding: 8 }}>スタッフ未登録</div> : (
             <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -799,9 +1125,9 @@ function SettingsScreen({ settings, setSettings, holidays, bookings, setBookings
                     <span style={{ fontSize: 14, fontWeight: 600, color: "#1f2937" }}>{name}</span>
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                    <button onClick={() => moveStaff(idx, -1)} disabled={idx === 0} style={{ border: "none", background: "none", cursor: idx === 0 ? "default" : "pointer", color: idx === 0 ? "#d1d5db" : "#6b7280", fontSize: 16, padding: "2px 6px" }}>↑</button>
-                    <button onClick={() => moveStaff(idx, 1)} disabled={idx === staffList.length - 1} style={{ border: "none", background: "none", cursor: idx === staffList.length - 1 ? "default" : "pointer", color: idx === staffList.length - 1 ? "#d1d5db" : "#6b7280", fontSize: 16, padding: "2px 6px" }}>↓</button>
-                    <button onClick={() => removeStaff(name)} style={{ border: "none", background: "none", color: "#ef4444", cursor: "pointer", fontSize: 18, padding: "2px 6px" }}>×</button>
+                    <button onClick={() => moveStaff(idx, -1)} onTouchEnd={(e) => { e.preventDefault(); moveStaff(idx, -1); }} disabled={idx === 0} style={{ border: "none", background: "none", cursor: idx === 0 ? "default" : "pointer", color: idx === 0 ? "#d1d5db" : "#6b7280", fontSize: 16, padding: "2px 6px" }}>↑</button>
+                    <button onClick={() => moveStaff(idx, 1)} onTouchEnd={(e) => { e.preventDefault(); moveStaff(idx, 1); }} disabled={idx === staffList.length - 1} style={{ border: "none", background: "none", cursor: idx === staffList.length - 1 ? "default" : "pointer", color: idx === staffList.length - 1 ? "#d1d5db" : "#6b7280", fontSize: 16, padding: "2px 6px" }}>↓</button>
+                    <button onClick={() => removeStaff(name)} onTouchEnd={(e) => { e.preventDefault(); removeStaff(name); }} style={{ border: "none", background: "none", color: "#ef4444", cursor: "pointer", fontSize: 18, padding: "2px 6px" }}>×</button>
                   </div>
                 </div>
               ))}
@@ -809,14 +1135,14 @@ function SettingsScreen({ settings, setSettings, holidays, bookings, setBookings
           )}
         </div>
 
-        {/* ==================== SHIFT CALENDAR ==================== */}
+        {/* Shift Calendar */}
         <div style={S.card}>
           <h3 style={S.cardTitle}>📅 シフト管理</h3>
           <p style={{ fontSize: 12, color: "#6b7280", marginBottom: 10 }}>スタッフの出勤/休みを月単位で管理。休みにすると予約表の該当列が赤くなります。</p>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-            <button onClick={prevShiftMonth} style={S.navArrowSm}>‹</button>
+            <button onClick={prevShiftMonth} onTouchEnd={(e) => { e.preventDefault(); prevShiftMonth(); }} style={S.navArrowSm}>‹</button>
             <span style={{ fontWeight: 700, fontSize: 15, color: "#1f2937" }}>{sy}年{sm + 1}月</span>
-            <button onClick={nextShiftMonth} style={S.navArrowSm}>›</button>
+            <button onClick={nextShiftMonth} onTouchEnd={(e) => { e.preventDefault(); nextShiftMonth(); }} style={S.navArrowSm}>›</button>
           </div>
           {staffList.length === 0 ? <div style={{ color: "#9ca3af", textAlign: "center", padding: 16 }}>スタッフを先に登録してください</div> : (
             <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
@@ -843,12 +1169,15 @@ function SettingsScreen({ settings, setSettings, holidays, bookings, setBookings
                           const isOff = shifts[dateStr]?.[name] === true;
                           return (
                             <td key={name} style={S.shiftTd}>
-                              <button onClick={() => toggleShift(dateStr, name)}
+                              <button
+                                onClick={() => toggleShift(dateStr, name)}
+                                onTouchEnd={(e) => { e.preventDefault(); toggleShift(dateStr, name); }}
                                 style={{
                                   width: "100%", padding: "4px 0", border: "none", borderRadius: 4, cursor: "pointer",
                                   background: isOff ? "#fee2e2" : "#dcfce7",
                                   color: isOff ? "#ef4444" : "#059669",
                                   fontWeight: 600, fontSize: 11,
+                                  WebkitTapHighlightColor: "transparent",
                                 }}>
                                 {isOff ? "休" : "○"}
                               </button>
@@ -869,16 +1198,20 @@ function SettingsScreen({ settings, setSettings, holidays, bookings, setBookings
           <h3 style={S.cardTitle}>定休曜日</h3>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
             {DAYS_JP.map((d, i) => (
-              <button key={d} onClick={() => toggleClosedDay(i)} style={{
-                width: 44, height: 44, borderRadius: "50%",
-                border: closedDays.includes(i) ? "2px solid #ef4444" : "2px solid #e5e7eb",
-                background: closedDays.includes(i) ? "#fef2f2" : "white",
-                color: closedDays.includes(i) ? "#ef4444" : "#374151",
-                fontWeight: 600, cursor: "pointer", fontSize: 14,
-              }}>{d}</button>
+              <button key={d}
+                onClick={() => toggleClosedDay(i)}
+                onTouchEnd={(e) => { e.preventDefault(); toggleClosedDay(i); }}
+                style={{
+                  width: 44, height: 44, borderRadius: "50%",
+                  border: closedDays.includes(i) ? "2px solid #ef4444" : "2px solid #e5e7eb",
+                  background: closedDays.includes(i) ? "#fef2f2" : "white",
+                  color: closedDays.includes(i) ? "#ef4444" : "#374151",
+                  fontWeight: 600, cursor: "pointer", fontSize: 14,
+                  WebkitTapHighlightColor: "transparent",
+                }}>{d}</button>
             ))}
           </div>
-          <button onClick={saveClosedDays} style={S.smallSaveBtn}>{saved.closed ? "✅ 保存しました" : "保存"}</button>
+          <button onClick={saveClosedDays} onTouchEnd={(e) => { e.preventDefault(); saveClosedDays(); }} style={S.smallSaveBtn}>{saved.closed ? "✅ 保存しました" : "保存"}</button>
         </div>
 
         {/* Closed dates */}
@@ -886,14 +1219,14 @@ function SettingsScreen({ settings, setSettings, holidays, bookings, setBookings
           <h3 style={S.cardTitle}>休診日（特定日）</h3>
           <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12 }}>
             <input type="date" value={newClosedDate} onChange={(e) => setNewClosedDate(e.target.value)} style={S.timeInput} />
-            <button onClick={addClosedDate} style={S.addBtn}>追加</button>
+            <button onClick={addClosedDate} onTouchEnd={(e) => { e.preventDefault(); addClosedDate(); }} style={S.addBtn}>追加</button>
           </div>
           {closedDates.length === 0 ? <div style={{ color: "#9ca3af", textAlign: "center" }}>登録なし</div> : (
             <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
               {closedDates.map((d) => (
                 <div key={d} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 8px", background: "#f9fafb", borderRadius: 6 }}>
                   <span style={{ fontSize: 14 }}>{d}（{DAYS_JP[dayOfWeek(d)]}）</span>
-                  <button onClick={() => removeClosedDate(d)} style={{ border: "none", background: "none", color: "#ef4444", cursor: "pointer", fontSize: 18 }}>×</button>
+                  <button onClick={() => removeClosedDate(d)} onTouchEnd={(e) => { e.preventDefault(); removeClosedDate(d); }} style={{ border: "none", background: "none", color: "#ef4444", cursor: "pointer", fontSize: 18 }}>×</button>
                 </div>
               ))}
             </div>
@@ -925,7 +1258,7 @@ function SettingsScreen({ settings, setSettings, holidays, bookings, setBookings
             <input type="password" value={newPin} onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ""))} placeholder="新しいPIN" style={S.textInput} maxLength={8} />
           </div>
           {pinMsg && <div style={{ color: pinMsg.includes("変更") ? "#22c55e" : "#ef4444", fontSize: 13, marginBottom: 8 }}>{pinMsg}</div>}
-          <button onClick={changePin} style={S.outlineBtn}>PINを変更する</button>
+          <button onClick={changePin} onTouchEnd={(e) => { e.preventDefault(); changePin(); }} style={S.outlineBtn}>PINを変更する</button>
         </div>
 
         {/* Backup */}
@@ -933,12 +1266,12 @@ function SettingsScreen({ settings, setSettings, holidays, bookings, setBookings
           <h3 style={S.cardTitle}>バックアップ & 復元</h3>
           <p style={{ fontSize: 13, color: "#6b7280", marginBottom: 12 }}>データのバックアップと復元ができます。</p>
           <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={handleBackup} style={S.backupBtn}>📦 バックアップ</button>
+            <button onClick={handleBackup} onTouchEnd={(e) => { e.preventDefault(); handleBackup(); }} style={S.backupBtn}>📦 バックアップ</button>
             <label style={S.restoreBtn}>🔄 復元する<input type="file" accept=".json" onChange={handleRestore} style={{ display: "none" }} /></label>
           </div>
         </div>
 
-        <button onClick={onLogout} style={S.logoutBtn}>ログアウト</button>
+        <button onClick={onLogout} onTouchEnd={(e) => { e.preventDefault(); onLogout(); }} style={S.logoutBtn}>ログアウト</button>
       </div>
     </div>
   );
@@ -957,75 +1290,94 @@ const S = {
   loginLabel: { fontWeight: 700, fontSize: 16, color: "#1f2937", textAlign: "left", marginBottom: 4 },
   loginDivider: { height: 2, background: "linear-gradient(90deg,#3b82f6,#93c5fd)", marginBottom: 16, borderRadius: 1 },
   pinInput: { width: "100%", padding: 16, border: "2px solid #e5e7eb", borderRadius: 12, fontSize: 24, textAlign: "center", letterSpacing: 8, outline: "none", boxSizing: "border-box", marginBottom: 12 },
-  loginBtn: { width: "100%", padding: 14, background: "#3b82f6", color: "white", border: "none", borderRadius: 12, fontSize: 16, fontWeight: 700, cursor: "pointer", marginBottom: 8 },
+  loginBtn: { width: "100%", padding: 14, background: "#3b82f6", color: "white", border: "none", borderRadius: 12, fontSize: 16, fontWeight: 700, cursor: "pointer", marginBottom: 8, WebkitTapHighlightColor: "transparent" },
   pinHint: { fontSize: 13, color: "#9ca3af" },
   errorText: { color: "#ef4444", fontSize: 13, marginBottom: 8 },
+
   header: { background: "linear-gradient(135deg,#2563eb,#1d4ed8)", color: "white", padding: "14px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 50 },
   headerTitle: { fontSize: 18, fontWeight: 700, flex: 1, textAlign: "center" },
   headerTitle2: { fontSize: 16, fontWeight: 700 },
-  settingsBtn: { background: "rgba(255,255,255,0.2)", border: "none", color: "white", padding: "6px 14px", borderRadius: 8, fontWeight: 600, cursor: "pointer", fontSize: 13 },
-  backBtn: { background: "none", border: "none", color: "white", cursor: "pointer", fontWeight: 600, fontSize: 14, padding: "4px 0" },
-  todayBtn: { background: "rgba(255,255,255,0.2)", border: "none", color: "white", padding: "6px 12px", borderRadius: 8, fontWeight: 600, cursor: "pointer", fontSize: 13 },
+  settingsBtn: { background: "rgba(255,255,255,0.2)", border: "none", color: "white", padding: "6px 14px", borderRadius: 8, fontWeight: 600, cursor: "pointer", fontSize: 13, WebkitTapHighlightColor: "transparent" },
+  backBtn: { background: "none", border: "none", color: "white", cursor: "pointer", fontWeight: 600, fontSize: 14, padding: "4px 0", WebkitTapHighlightColor: "transparent" },
+  todayBtn: { background: "rgba(255,255,255,0.2)", border: "none", color: "white", padding: "6px 12px", borderRadius: 8, fontWeight: 600, cursor: "pointer", fontSize: 13, WebkitTapHighlightColor: "transparent" },
+
   monthNav: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 24px" },
-  navArrow: { width: 36, height: 36, borderRadius: "50%", border: "1px solid #e5e7eb", background: "white", fontSize: 20, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#374151" },
-  navArrowSm: { width: 30, height: 30, borderRadius: "50%", border: "1px solid #e5e7eb", background: "white", fontSize: 16, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#374151" },
+  navArrow: { width: 36, height: 36, borderRadius: "50%", border: "1px solid #e5e7eb", background: "white", fontSize: 20, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#374151", WebkitTapHighlightColor: "transparent" },
+  navArrowSm: { width: 30, height: 30, borderRadius: "50%", border: "1px solid #e5e7eb", background: "white", fontSize: 16, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", color: "#374151", WebkitTapHighlightColor: "transparent" },
   monthLabel: { fontSize: 18, fontWeight: 700, color: "#1f2937" },
+
   legend: { display: "flex", gap: 12, justifyContent: "center", padding: "4px 16px 8px", fontSize: 12, color: "#6b7280", flexWrap: "wrap" },
   legendItem: { display: "flex", alignItems: "center", gap: 4 },
   legendDot: { width: 8, height: 8, borderRadius: "50%", display: "inline-block" },
+
   calGrid: { display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 1, padding: "0 8px", background: "#e5e7eb", borderRadius: 12, margin: "0 12px", overflow: "hidden" },
   calHeader: { textAlign: "center", fontWeight: 700, fontSize: 12, padding: "8px 0", background: "#f9fafb" },
   calCell: { background: "white", minHeight: 56, padding: "4px 2px", display: "flex", flexDirection: "column", alignItems: "center" },
+
   dayNav: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 16px", background: "white", borderBottom: "1px solid #e5e7eb" },
-  dayNavBtn: { background: "none", border: "1px solid #e5e7eb", borderRadius: 8, padding: "6px 12px", cursor: "pointer", color: "#374151", fontWeight: 500, fontSize: 13 },
+  dayNavBtn: { background: "none", border: "1px solid #e5e7eb", borderRadius: 8, padding: "6px 12px", cursor: "pointer", color: "#374151", fontWeight: 500, fontSize: 13, WebkitTapHighlightColor: "transparent" },
   dayNavLabel: { fontWeight: 600, color: "#3b82f6", fontSize: 14 },
+
   dayStatus: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 16px", background: "white", borderBottom: "1px solid #e5e7eb" },
-  dayBtn: { border: "1px solid #e5e7eb", background: "white", borderRadius: 8, padding: "6px 12px", cursor: "pointer", fontSize: 12, color: "#374151" },
-  dayBtnActive: { border: "1px solid #3b82f6", background: "#eff6ff", borderRadius: 8, padding: "6px 12px", cursor: "pointer", fontSize: 12, color: "#3b82f6", fontWeight: 600 },
+  dayBtn: { border: "1px solid #e5e7eb", background: "white", borderRadius: 8, padding: "6px 12px", cursor: "pointer", fontSize: 12, color: "#374151", WebkitTapHighlightColor: "transparent" },
+  dayBtnActive: { border: "1px solid #3b82f6", background: "#eff6ff", borderRadius: 8, padding: "6px 12px", cursor: "pointer", fontSize: 12, color: "#3b82f6", fontWeight: 600, WebkitTapHighlightColor: "transparent" },
+
   shiftSection: { padding: "8px 16px", background: "white", borderBottom: "1px solid #e5e7eb" },
   shiftLabel: { fontSize: 12, color: "#6b7280", fontWeight: 600, marginBottom: 6 },
   shiftRow: { display: "flex", gap: 6, flexWrap: "wrap" },
-  shiftBtnOn: { display: "flex", flexDirection: "column", alignItems: "center", gap: 2, padding: "6px 10px", border: "2px solid #a7f3d0", borderRadius: 10, background: "#ecfdf5", cursor: "pointer", minWidth: 52 },
-  shiftBtnOff: { display: "flex", flexDirection: "column", alignItems: "center", gap: 2, padding: "6px 10px", border: "2px solid #fca5a5", borderRadius: 10, background: "#fef2f2", cursor: "pointer", minWidth: 52 },
-  actionBtn: { display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 14px", border: "1px solid #e5e7eb", borderRadius: 20, background: "white", cursor: "pointer", fontSize: 13, fontWeight: 500, color: "#374151" },
+  shiftBtnOn: { display: "flex", flexDirection: "column", alignItems: "center", gap: 2, padding: "6px 10px", border: "2px solid #a7f3d0", borderRadius: 10, background: "#ecfdf5", cursor: "pointer", minWidth: 52, WebkitTapHighlightColor: "transparent" },
+  shiftBtnOff: { display: "flex", flexDirection: "column", alignItems: "center", gap: 2, padding: "6px 10px", border: "2px solid #fca5a5", borderRadius: 10, background: "#fef2f2", cursor: "pointer", minWidth: 52, WebkitTapHighlightColor: "transparent" },
+
+  actionBtn: { display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 14px", border: "1px solid #e5e7eb", borderRadius: 20, background: "white", cursor: "pointer", fontSize: 13, fontWeight: 500, color: "#374151", WebkitTapHighlightColor: "transparent" },
+
   gridContainer: { padding: "0 4px 100px" },
   gridHeader: { display: "grid", gap: 1, position: "sticky", top: 48, zIndex: 40, background: "#f1f5f9", borderRadius: "8px 8px 0 0", marginTop: 8 },
   timeCol: { padding: "10px 2px", fontSize: 10, fontWeight: 700, color: "#6b7280", textAlign: "center", background: "#f1f5f9" },
   colHeader: { padding: "8px 1px", fontSize: 11, fontWeight: 700, color: "#1f2937", textAlign: "center", background: "#f1f5f9", lineHeight: 1.2 },
+
   sectionHeader: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 12px", background: "#fffbeb", borderTop: "2px solid #fbbf24", marginTop: 4, fontSize: 13, fontWeight: 600, color: "#92400e" },
-  sectionBtn: { border: "1px solid #e5e7eb", background: "white", borderRadius: 6, padding: "4px 10px", fontSize: 12, cursor: "pointer", color: "#6b7280" },
-  sectionBtnActive: { border: "1px solid #fbbf24", background: "#fef3c7", borderRadius: 6, padding: "4px 10px", fontSize: 12, cursor: "pointer", color: "#92400e", fontWeight: 600 },
+  sectionBtn: { border: "1px solid #e5e7eb", background: "white", borderRadius: 6, padding: "4px 10px", fontSize: 12, cursor: "pointer", color: "#6b7280", WebkitTapHighlightColor: "transparent" },
+  sectionBtnActive: { border: "1px solid #fbbf24", background: "#fef3c7", borderRadius: 6, padding: "4px 10px", fontSize: 12, cursor: "pointer", color: "#92400e", fontWeight: 600, WebkitTapHighlightColor: "transparent" },
+
   gridBody: { background: "#e5e7eb" },
   gridRow: { display: "grid", gap: 1 },
   timeCell: { background: "#f9fafb", padding: "10px 2px", fontSize: 10, color: "#6b7280", textAlign: "center", fontWeight: 500 },
-  slot: { background: "white", height: 39, display: "flex", alignItems: "center", justifyContent: "center", cursor: "default" },
-  overlay: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 100 },
-  modal: { background: "white", borderRadius: "20px 20px 0 0", padding: "16px 24px 32px", width: "100%", maxWidth: 560, maxHeight: "85vh", overflowY: "auto" },
-  modalHandle: { width: 40, height: 4, borderRadius: 2, background: "#d1d5db", margin: "0 auto 16px" },
-  modalTitle: { fontSize: 20, fontWeight: 700, color: "#1f2937", marginBottom: 16 },
-  modalField: { marginBottom: 16 },
-  modalLabel: { fontSize: 13, fontWeight: 700, color: "#374151", marginBottom: 6, display: "block" },
-  btnGroup: { display: "flex", gap: 8 },
-  btnGroupItem: { flex: 1, padding: "10px 6px", border: "2px solid #e5e7eb", borderRadius: 10, background: "white", cursor: "pointer", fontSize: 14, fontWeight: 500, color: "#374151", textAlign: "center" },
-  btnGroupActive: { flex: 1, padding: "10px 6px", border: "2px solid #3b82f6", borderRadius: 10, background: "#eff6ff", cursor: "pointer", fontSize: 14, fontWeight: 700, color: "#3b82f6", textAlign: "center" },
-  chip: { padding: "8px 12px", border: "2px solid #e5e7eb", borderRadius: 20, background: "white", cursor: "pointer", fontSize: 13, fontWeight: 500, color: "#374151" },
-  chipActive: { padding: "8px 12px", border: "2px solid #3b82f6", borderRadius: 20, background: "#eff6ff", cursor: "pointer", fontSize: 13, fontWeight: 700, color: "#3b82f6" },
-  textInput: { width: "100%", padding: 12, border: "2px solid #e5e7eb", borderRadius: 10, fontSize: 15, outline: "none", boxSizing: "border-box" },
-  textArea: { width: "100%", padding: 12, border: "2px solid #e5e7eb", borderRadius: 10, fontSize: 15, outline: "none", boxSizing: "border-box", resize: "vertical", fontFamily: "inherit" },
-  saveBtn: { width: "100%", padding: 14, background: "#3b82f6", color: "white", border: "none", borderRadius: 12, fontSize: 16, fontWeight: 700, cursor: "pointer", marginBottom: 8 },
-  deleteBtn: { width: "100%", padding: 14, background: "#fef2f2", color: "#ef4444", border: "1px solid #fca5a5", borderRadius: 12, fontSize: 16, fontWeight: 700, cursor: "pointer", marginBottom: 8 },
-  cancelBtn: { width: "100%", padding: 14, background: "#f3f4f6", color: "#6b7280", border: "none", borderRadius: 12, fontSize: 16, fontWeight: 600, cursor: "pointer" },
-  settingsBody: { padding: "12px 12px 40px" },
-  card: { background: "white", borderRadius: 12, padding: 16, marginBottom: 12, boxShadow: "0 1px 3px rgba(0,0,0,0.06)" },
-  cardTitle: { fontSize: 15, fontWeight: 700, color: "#3b82f6", marginBottom: 12 },
-  timeRow: { display: "flex", alignItems: "center", gap: 8, fontSize: 14, color: "#374151", flexWrap: "wrap" },
-  timeInput: { padding: "8px 12px", border: "2px solid #e5e7eb", borderRadius: 8, fontSize: 14, outline: "none" },
-  smallSaveBtn: { marginTop: 12, padding: "8px 20px", background: "#3b82f6", color: "white", border: "none", borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: "pointer" },
-  addBtn: { padding: "8px 20px", background: "#ef4444", color: "white", border: "none", borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" },
-  outlineBtn: { padding: "10px 20px", background: "white", color: "#3b82f6", border: "2px solid #3b82f6", borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: "pointer" },
-  backupBtn: { padding: "10px 16px", background: "#3b82f6", color: "white", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 },
-  restoreBtn: { padding: "10px 16px", background: "#fef2f2", color: "#ef4444", border: "1px solid #fca5a5", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 },
-  logoutBtn: { width: "100%", padding: 14, background: "white", color: "#374151", border: "1px solid #e5e7eb", borderRadius: 12, fontSize: 16, fontWeight: 600, cursor: "pointer", marginTop: 8 },
-  shiftTh: { padding: "6px 4px", borderBottom: "2px solid #e5e7eb", background: "#f9fafb", fontWeight: 700, fontSize: 11, textAlign: "center", position: "sticky", top: 0, zIndex: 1 },
-  shiftTd: { padding: "3px 2px", borderBottom: "1px solid #f3f4f6", textAlign: "center", fontSize: 11 },
+  slot: { background: "white", minHeight: 39, display: "flex", alignItems: "center", justifyContent: "center", WebkitTapHighlightColor: "transparent" },
+
+  overlay: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 100 },
+  modal: { background: "white", borderRadius: "20px 20px 0 0", maxWidth: 560, width: "100%", maxHeight: "85vh", overflowY: "auto", padding: "12px 20px 32px", WebkitOverflowScrolling: "touch" },
+  modalHandle: { width: 40, height: 4, background: "#d1d5db", borderRadius: 2, margin: "0 auto 12px" },
+  modalTitle: { fontSize: 18, fontWeight: 700, color: "#1f2937", marginBottom: 16, margin: 0, marginTop: 0 },
+  modalField: { marginBottom: 14 },
+  modalLabel: { fontSize: 13, fontWeight: 600, color: "#374151", marginBottom: 6, display: "block" },
+
+  chip: { border: "1px solid #e5e7eb", borderRadius: 20, padding: "6px 14px", fontSize: 13, fontWeight: 500, cursor: "pointer", background: "white", color: "#374151", WebkitTapHighlightColor: "transparent" },
+  chipActive: { border: "2px solid #3b82f6", borderRadius: 20, padding: "5px 13px", fontSize: 13, fontWeight: 600, cursor: "pointer", background: "#dbeafe", color: "#2563eb", WebkitTapHighlightColor: "transparent" },
+
+  btnGroup: { display: "flex", gap: 6, flexWrap: "wrap" },
+  btnGroupItem: { flex: 1, padding: "10px 8px", border: "1px solid #e5e7eb", borderRadius: 10, background: "white", fontSize: 14, fontWeight: 600, color: "#374151", cursor: "pointer", textAlign: "center", minWidth: 60, WebkitTapHighlightColor: "transparent" },
+  btnGroupActive: { flex: 1, padding: "10px 8px", border: "2px solid #3b82f6", borderRadius: 10, background: "#eff6ff", fontSize: 14, fontWeight: 700, color: "#2563eb", cursor: "pointer", textAlign: "center", minWidth: 60, WebkitTapHighlightColor: "transparent" },
+
+  textInput: { width: "100%", padding: "10px 12px", border: "1px solid #e5e7eb", borderRadius: 10, fontSize: 14, outline: "none", boxSizing: "border-box" },
+  textArea: { width: "100%", padding: "10px 12px", border: "1px solid #e5e7eb", borderRadius: 10, fontSize: 14, outline: "none", boxSizing: "border-box", resize: "vertical" },
+  timeInput: { padding: "8px 12px", border: "1px solid #e5e7eb", borderRadius: 8, fontSize: 14, outline: "none" },
+
+  saveBtn: { width: "100%", padding: 14, background: "#3b82f6", color: "white", border: "none", borderRadius: 12, fontSize: 15, fontWeight: 700, cursor: "pointer", marginBottom: 8, WebkitTapHighlightColor: "transparent" },
+  cancelBtn: { width: "100%", padding: 12, background: "white", color: "#6b7280", border: "1px solid #e5e7eb", borderRadius: 12, fontSize: 14, fontWeight: 500, cursor: "pointer", WebkitTapHighlightColor: "transparent" },
+  deleteBtn: { width: "100%", padding: 12, background: "#fef2f2", color: "#ef4444", border: "1px solid #fca5a5", borderRadius: 12, fontSize: 14, fontWeight: 600, cursor: "pointer", marginBottom: 8, WebkitTapHighlightColor: "transparent" },
+
+  settingsBody: { padding: "12px 16px 40px" },
+  card: { background: "white", borderRadius: 14, padding: 16, marginBottom: 14, boxShadow: "0 1px 3px rgba(0,0,0,0.06)", border: "1px solid #e5e7eb" },
+  cardTitle: { fontSize: 15, fontWeight: 700, color: "#1f2937", marginBottom: 12, marginTop: 0 },
+  smallSaveBtn: { padding: "8px 16px", background: "#3b82f6", color: "white", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer", marginTop: 8, WebkitTapHighlightColor: "transparent" },
+  addBtn: { padding: "10px 16px", background: "#3b82f6", color: "white", border: "none", borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", WebkitTapHighlightColor: "transparent" },
+  outlineBtn: { width: "100%", padding: 12, background: "white", color: "#3b82f6", border: "2px solid #3b82f6", borderRadius: 12, fontSize: 14, fontWeight: 600, cursor: "pointer", WebkitTapHighlightColor: "transparent" },
+  timeRow: { display: "flex", alignItems: "center", gap: 8, fontSize: 14, color: "#374151" },
+
+  backupBtn: { flex: 1, padding: "10px 12px", background: "#f0f9ff", color: "#2563eb", border: "1px solid #bfdbfe", borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: "pointer", textAlign: "center", WebkitTapHighlightColor: "transparent" },
+  restoreBtn: { flex: 1, padding: "10px 12px", background: "#fefce8", color: "#a16207", border: "1px solid #fde68a", borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: "pointer", textAlign: "center", WebkitTapHighlightColor: "transparent" },
+  logoutBtn: { width: "100%", padding: 14, background: "#f1f5f9", color: "#64748b", border: "none", borderRadius: 12, fontSize: 15, fontWeight: 600, cursor: "pointer", marginBottom: 20, WebkitTapHighlightColor: "transparent" },
+
+  shiftTh: { padding: "6px 4px", borderBottom: "2px solid #e5e7eb", fontWeight: 700, textAlign: "center", position: "sticky", top: 0, background: "white", zIndex: 1 },
+  shiftTd: { padding: "3px 2px", borderBottom: "1px solid #f3f4f6", textAlign: "center" },
 };
